@@ -1,0 +1,8 @@
+{
+  "appId": "br.inventario.florestal",
+  "appName": "Inventário Florestal",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
