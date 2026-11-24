@@ -448,7 +448,9 @@
       <p class="mudo">Dados, parcelas, estatística, ${S.projeto.tipo === 'cerrado' ? 'fitossociologia, ' : ''}vértices e pontos, com as coordenadas em UTM.</p>
       <button class="largo sec" data-a="exp" data-f="csv">Dados de campo (.csv)</button>
       <button class="largo sec" data-a="exp" data-f="kml">Mapa: parcelas e pontos (.kml)</button>
-      <button class="largo sec" data-a="exp" data-f="geojson">Mapa para o Guru Maps (.geojson)</button></div>
+      <button class="largo sec" data-a="exp" data-f="geojson">Mapa para o Guru Maps (.geojson)</button>
+      <button class="largo sec" data-a="exp" data-f="png">Mapa em imagem (.png)</button>
+      <p class="mudo">Desenho das áreas do KML com as parcelas numeradas, legenda, escala e coordenadas UTM.</p></div>
       <div class="cartao"><h3>Backup e outro aparelho</h3>
       <button class="largo" data-a="exp" data-f="backup">Exportar backup (.json)</button>
       <p class="mudo">Importe o backup de outro aparelho na tela inicial: as parcelas se juntam às deste. Quando a mesma parcela existe nos dois, fica a versão alterada por último.</p></div>`;
@@ -482,7 +484,7 @@
           : v.map(u => `<circle cx="${X(u)}" cy="${Y(u)}" r="${k * 0.9}" class="m-vert"/>`).join('')).join('')}
         ${pon.map(({ p, u }) => `<circle cx="${X(u)}" cy="${Y(u)}" r="${k * 0.8}" fill="${cores[p.tipo] || '#555'}" stroke="#fff" stroke-width="${k * 0.2}"/>`).join('')}
         <g id="m-eu"></g></svg>
-        <div class="mapa-botoes"><button class="mini" data-a="zoom" data-z="0.6">+</button><button class="mini" data-a="zoom" data-z="1.6">−</button><button class="mini sec" data-a="zoom" data-z="0">⌂</button><button class="mini sec" data-a="zoom" data-z="eu">◎</button></div>
+        <div class="mapa-botoes"><button class="mini" data-a="zoom" data-z="0.6">+</button><button class="mini" data-a="zoom" data-z="1.6">−</button><button class="mini sec" data-a="zoom" data-z="0">⌂</button><button class="mini sec" data-a="zoom" data-z="eu">◎</button><button class="mini sec" data-a="exp" data-f="png" title="Salvar o mapa em imagem">⤓</button></div>
         <p class="mudo legenda"><span style="color:#2e7d32">■</span> estratos <span style="color:#ef6c00">■</span> parcelas <span style="color:#c62828">●</span> árvores <span style="color:#1565c0">●</span> planejados <span style="color:#0d47a1">◉</span> você</p>`;
       this.eventos(); this.posicao();
     },
@@ -695,6 +697,7 @@
       if (f === 'csv') { blob = Exportar.csv(proj, [...S.parcelas].sort(ordNum)); nome = Exportar.nomeArquivo(proj, 'dados', 'csv'); }
       if (f === 'kml') { blob = Exportar.kml(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'kml'); }
       if (f === 'geojson') { blob = Exportar.geojson(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'geojson'); }
+      if (f === 'png') { blob = await MapaPNG.gerar(proj, [...S.parcelas].sort(ordNum), S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'png'); }
       if (f === 'backup') { blob = Exportar.backup(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'backup', 'json'); await DB.config('ultimoBackup', Date.now()); }
       await Exportar.entregar(blob, nome);
     } catch (e) { console.error(e); toast('Erro ao exportar: ' + esc(e.message), 'erro'); }
