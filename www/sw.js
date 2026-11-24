@@ -1,5 +1,5 @@
 /* Guarda o app no aparelho para funcionar sem internet. Ao publicar versão nova, mude VERSAO. */
-const VERSAO = 'inventario-v5';
+const VERSAO = 'inventario-v6';
 const ARQUIVOS = ['./', 'index.html', 'manifest.webmanifest', 'css/app.css', 'js/calc.js', 'js/geo.js', 'js/db.js',
   'js/especies.js', 'js/plataforma.js', 'js/exportar.js', 'js/mapa-png.js', 'js/app.js', 'vendor/xlsx.full.min.js', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSAO).then(c => c.addAll(ARQUIVOS)).then(() => self.skipWaiting())); });

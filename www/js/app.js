@@ -206,8 +206,9 @@
     const el = $('#lista-projetos'); if (!el) return;
     el.innerHTML = L.length ? L.map(p => {
       const n = todas.filter(x => x.projetoId === p.id).length;
-      return `<button class="item" data-a="abrir" data-id="${p.id}"><b>${esc(p.nome)}</b>
-        <span class="mudo">${p.tipo === 'eucalipto' ? 'Reflorestamento' : 'Cerrado'} · ${n} parcela${n === 1 ? '' : 's'} · ${new Date(p.atualizado || p.criado).toLocaleDateString('pt-BR')}</span></button>`;
+      return `<div class="item-proj"><button class="item" data-a="abrir" data-id="${p.id}"><b>${esc(p.nome)}</b>
+        <span class="mudo">${p.tipo === 'eucalipto' ? 'Reflorestamento' : 'Cerrado'} · ${n} parcela${n === 1 ? '' : 's'} · ${new Date(p.atualizado || p.criado).toLocaleDateString('pt-BR')}</span></button>
+        <button class="lixeira" data-a="apagar-da-lista" data-id="${p.id}" aria-label="Apagar ${esc(p.nome)}" title="Apagar inventário">🗑</button></div>`;
     }).join('') : '<p class="mudo">Nenhum inventário ainda. Toque em "Novo inventário".</p>';
     if (navigator.storage?.estimate) {
       const e = await navigator.storage.estimate(); const pers = navigator.storage.persisted ? await navigator.storage.persisted() : false;
@@ -554,11 +555,11 @@
         if (confirm(`Remover o estrato ${alvo[+el.dataset.i].nome}?`)) { alvo.splice(+el.dataset.i, 1); render(); } break;
       }
       case 'apagar-projeto':
-        if (prompt(`Para apagar "${proj.nome}" e todas as parcelas, digite APAGAR`) === 'APAGAR') {
-          for (const p of S.parcelas) await DB.apagar('parcelas', p.id);
-          for (const p of S.pontos) await DB.apagar('pontos', p.id);
-          await DB.apagar('projetos', proj.id); S.view = 'home'; S.projeto = null; render(); preencherHome();
-        } break;
+        if (await apagarInventario(proj.id)) { S.view = 'home'; S.projeto = null; render(); preencherHome(); }
+        break;
+      case 'apagar-da-lista':
+        if (await apagarInventario(el.dataset.id)) preencherHome();
+        break;
       case 'salvar-equipe': S.equipe = $('#equipe').value.trim(); await DB.config('equipe', S.equipe); toast('Salvo', 'ok'); break;
       case 'nova-parcela': {
         const nums = S.parcelas.map(p => parseInt(p.numero) || 0), prox = (nums.length ? Math.max(...nums) : 0) + 1;
@@ -654,6 +655,27 @@
     if (!$('#c-nome')) return;
     if (S.view === 'novo') S.novoRasc = lerConfig({ params: S.novoRasc?.params || PRESETS[S.novoTipo], estratos: S.novoEstratos || [], areaHa: S.novoRasc?.areaHa });
     else Object.assign(S.projeto, lerConfig(S.projeto));
+  }
+  // Janela simples de confirmação com SIM e NÃO
+  function simNao(titulo, html) {
+    return new Promise(res => {
+      const m = modal(`<h3>${titulo}</h3>${html}<div class="botoes"><button class="sec" data-m="cancelar">NÃO</button><button class="perigo-cheio" data-m="sim">SIM</button></div>`);
+      m.addEventListener('click', e => { const a = e.target.dataset.m; if (!a) return; m.remove(); res(a === 'sim'); });
+    });
+  }
+  // Apaga um inventário com suas parcelas e pontos, depois de confirmar
+  async function apagarInventario(id) {
+    const p = await DB.pegar('projetos', id); if (!p) return false;
+    const parc = await DB.porProjeto('parcelas', id), pts = await DB.porProjeto('pontos', id);
+    const arv = parc.reduce((s, x) => s + x.arvores.length, 0);
+    const ok = await simNao(`Apagar "${esc(p.nome)}"?`,
+      `<p>Serão apagadas <b>${parc.length}</b> parcela(s), <b>${arv}</b> árvore(s) e <b>${pts.length}</b> ponto(s). Não dá para desfazer.</p>`);
+    if (!ok) return false;
+    for (const x of parc) await DB.apagar('parcelas', x.id);
+    for (const x of pts) await DB.apagar('pontos', x.id);
+    await DB.apagar('projetos', id);
+    toast(`Inventário "${esc(p.nome)}" apagado.`, 'ok');
+    return true;
   }
   function lerExtras() { return [...document.querySelectorAll('[data-extra]')].map(i => numIn(i.value)); }
   let rascunho = null;

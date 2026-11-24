@@ -118,3 +118,6 @@ button.item:not(.parcela):not(.arv) { grid-template-columns: 1fr; }
 .modal-fundo { position: fixed; inset: 0; background: #0008; z-index: 30; display: grid; place-items: center; padding: 1rem; }
 .modal { background: var(--fundo); border-radius: var(--r); padding: 1.1rem; width: min(94vw, 440px); }
 .modal .botoes { display: flex; gap: .5rem; margin-top: .8rem; } .modal .botoes > * { flex: 1; }
+.item-proj { display: grid; grid-template-columns: 1fr auto; gap: .4rem; align-items: stretch; }
+.lixeira { background: transparent; border: 1px solid var(--borda); color: var(--ruim); font-size: 1.25rem; width: 52px; padding: 0; }
+button.perigo-cheio { background: var(--ruim); color: #fff; }
