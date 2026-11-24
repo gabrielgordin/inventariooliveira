@@ -189,3 +189,7 @@ body.sol .tk.fn { background: #eee !important; }
 .sug i { font-size: .72rem; font-weight: 400; color: var(--mudo); }
 body.digitando-nome .teclado { display: none; }
 body.sol .sug { background: #fff !important; border: 2px solid #000; color: #000; }
+
+/* iPhone instalado na tela inicial: barra de status translúcida sobre o cabeçalho verde */
+@supports (padding-top: env(safe-area-inset-top)) { header { padding-left: max(.8rem, env(safe-area-inset-left)); padding-right: max(.8rem, env(safe-area-inset-right)); } }
+input, select, textarea { font-size: max(16px, 1em); } /* evita o zoom automático do Safari ao tocar no campo */

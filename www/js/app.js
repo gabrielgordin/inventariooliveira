@@ -520,7 +520,7 @@
       <p class="mudo">Desenho das áreas do KML com as parcelas numeradas, legenda, escala e coordenadas UTM.</p></div>
       <div class="cartao"><h3>Backup e outro aparelho</h3>
       ${Plataforma.nativo ? `<p class="mudo">Backup automático: ${S.projeto.ultimoAutoBackup ? `último ${tempoAtras(S.projeto.ultimoAutoBackup)}` : 'ainda nenhum'}, em Documentos/Inventario/backup-automatico. Ele é gravado ao fechar cada parcela e ao sair dela. Fica só no aparelho: mande o backup para fora daqui de vez em quando.</p>` : ''}
-      <p class="mudo">Último backup enviado: ${S.projeto.ultimoBackupEnviado ? tempoAtras(S.projeto.ultimoBackupEnviado) : 'nenhum'}.</p>
+      <p class="mudo">Último backup enviado: ${S.projeto.ultimoBackupEnviado ? tempoAtras(S.projeto.ultimoBackupEnviado) : 'nenhum'}.${Plataforma.nativo ? '' : ' Nesta versão o backup não é gravado sozinho: exporte ao fim de cada parcela ou de cada dia (no iPhone, escolha "Salvar em Arquivos" ou mande pelo WhatsApp).'}</p>
       <button class="largo" data-a="exp" data-f="backup">Exportar backup (.json)</button>
       <p class="mudo">Importe o backup de outro aparelho na tela inicial: as parcelas se juntam às deste. Quando a mesma parcela existe nos dois, fica a versão alterada por último.</p></div>`;
   }
@@ -752,6 +752,11 @@
       }
       case 'nav-proxima': { const p = proximoPlanejado(S.alvoId); if (p) { S.alvoId = p.id; render(); } else toast('Não há outra parcela a fazer', 'aviso'); break; }
       case 'nav-abrir': await abrirParcelaPlanejada(); break;
+      case 'bussola-ios': {
+        try { const r = await DeviceOrientationEvent.requestPermission(); Bussola.permitido = r === 'granted'; } catch (e) { Bussola.permitido = false; }
+        if (!Bussola.permitido) toast('Sem permissão da bússola: a seta vai mostrar o rumo a partir do Norte.', 'aviso');
+        Bussola.desligar(); render(); break;
+      }
       case 'exp': await exportar(el.dataset.f); break;
     }
   }
@@ -895,6 +900,7 @@
         <g id="nav-g"><polygon points="0,-88 46,40 0,18 -46,40" class="nav-ponta"/></g></svg>
       <div id="nav-info" class="nav-info">Aguardando GPS…</div>
       <div id="nav-chegou" class="nav-chegou" hidden>Você chegou ao ponto.</div>
+      ${Bussola.precisaPermissao() ? `<button class="sec" data-a="bussola-ios">🧭 Ativar a bússola</button>` : ''}
       <button class="largo" data-a="nav-abrir">Abrir a parcela ${esc(pt.nome)} aqui</button>
       <div class="linha-botoes"><button class="sec" data-a="nav-proxima" ${pend > 1 ? '' : 'disabled'}>Outra mais perto ›</button></div>
       <p class="mudo">Segure o celular deitado, com o topo para a frente. Faltam ${pend} parcela(s) do plano.</p></section>`;
@@ -932,7 +938,10 @@
     },
     ligar() { if (this.ligado) return; this.ligado = true; window.addEventListener('deviceorientationabsolute', this.ev); window.addEventListener('deviceorientation', this.ev); },
     desligar() { if (!this.ligado) return; this.ligado = false; window.removeEventListener('deviceorientationabsolute', this.ev); window.removeEventListener('deviceorientation', this.ev); },
-    rumo() { return Date.now() - this.t < 2000 ? this.valor : null; }
+    rumo() { return Date.now() - this.t < 2000 ? this.valor : null; },
+    permitido: false,
+    // iPhone (iOS 13+): a bússola só liga depois de pedir permissão num toque
+    precisaPermissao() { return typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function' && !this.permitido; }
   };
 
   async function definirSol(on) {
