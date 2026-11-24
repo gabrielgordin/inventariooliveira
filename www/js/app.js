@@ -368,8 +368,8 @@
         : `<div class="linha-botoes tres acoes-form"><button data-a="add-euc" data-m="nova">Árvore</button><button class="sec" data-a="add-euc" data-m="fuste">+ Fuste</button><button class="sec" data-a="add-euc" data-m="falha">Falha</button></div>`}
       </div>`
       : `<div class="entrada cartao" id="entrada">
-        <label>Espécie (nome popular)<input id="e-nome" list="dl-esp" autocomplete="off" enterkeyhint="next" value="${esc(edA?.nome ?? '')}"></label>
-        <datalist id="dl-esp">${listaEspecies().map(e => `<option value="${esc(e)}">`).join('')}</datalist>
+        <label>Espécie (nome popular)<input id="e-nome" data-sug="sug-nome" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="next" value="${esc(edA?.nome ?? '')}"></label>
+        <div class="sugestoes" id="sug-nome" hidden></div>
         <div class="grade2"><label>H (m)<input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="next" value="${esc(edA?.H ?? '')}"></label>
         <label>CAP (cm)<input id="e-cap"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="done" value="${esc(edA?.CAP ?? '')}"></label></div>
         <div id="extras">${S.extras.map((v, i) => `<label class="extra">CAP fuste ${i + 2}<input id="e-x${i}" data-extra="${i}"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} value="${esc(v ?? '')}"></label>`).join('')}</div>
@@ -495,8 +495,8 @@
   function abaPontos() {
     const L = [...S.pontos].sort((a, b) => String(b.hora).localeCompare(String(a.hora)));
     const tipos = { arvore: 'Árvore', planejado: 'Ponto planejado', outro: 'Outro' };
-    return `<div class="cartao"><label>Espécie ou descrição<input id="pt-nome" list="dl-esp2" placeholder="ex.: pequi, nascente, divisa"></label>
-      <datalist id="dl-esp2">${listaEspecies().map(e => `<option value="${esc(e)}">`).join('')}</datalist>
+    return `<div class="cartao"><label>Espécie ou descrição<input id="pt-nome" data-sug="sug-pt" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" placeholder="ex.: pequi, nascente, divisa"></label>
+      <div class="sugestoes" id="sug-pt" hidden></div>
       <div class="grade2"><label>Tipo<select id="pt-tipo"><option value="arvore">Árvore</option><option value="outro">Outro (água, divisa…)</option><option value="planejado">Ponto planejado</option></select></label>
       <label>Observação<input id="pt-obs"></label></div>
       <div class="linha-botoes"><button data-a="marcar-ponto">Marcar ponto GPS</button>
@@ -1083,7 +1083,42 @@
     const c = e.target.closest('[data-tecl]'); if (c) { $('#e-nome')?.blur(); marcarCampo(c.id); }
   });
   // no cerrado: escolheu a espécie → fecha o teclado do Android e vai para a altura
-  document.addEventListener('change', e => { if (e.target.id === 'e-nome' && usaTeclado()) { e.target.blur(); marcarCampo('e-h'); } });
+  // ----- sugestões de espécie enquanto digita (no lugar da lista do Android, que cobria o teclado) -----
+  function sugestoes(texto) {
+    const q = chaveEsp(texto), qp = semAcento(texto);
+    const freq = new Map(); S.parcelas.forEach(p => p.arvores.forEach(a => { if (a.nome) { const k = chaveEsp(a.nome); freq.set(k, (freq.get(k) || 0) + 1); } }));
+    const L = listaEspecies().map(n => ({ n, k: chaveEsp(n), p: semAcento(n), f: freq.get(chaveEsp(n)) || 0 }));
+    if (!q) return L.filter(x => x.f).sort((a, b) => b.f - a.f).slice(0, 8);
+    const nota = x => x.k.startsWith(q) ? 0 : x.p.split(/[\s-]+/).some(w => w.startsWith(qp)) ? 1 : x.k.includes(q) ? 2 : 9;
+    return L.map(x => ({ ...x, s: nota(x) })).filter(x => x.s < 9 && x.k !== q).sort((a, b) => a.s - b.s || b.f - a.f || a.n.localeCompare(b.n, 'pt')).slice(0, 10);
+  }
+  function mostrarSugestoes(inp) {
+    const box = $('#' + inp.dataset.sug); if (!box) return;
+    const L = sugestoes(inp.value);
+    box.hidden = !L.length;
+    box.innerHTML = L.map(x => `<button type="button" class="sug" data-nome="${esc(x.n)}">${esc(x.n)}${cientifico(S.projeto, x.n) ? `<i>${esc(cientifico(S.projeto, x.n).replace(/ \(conferir\)/, ''))}</i>` : ''}</button>`).join('');
+    box.scrollLeft = 0;
+  }
+  function escolherNome(inp, nome) {
+    inp.value = nome; $('#' + inp.dataset.sug).hidden = true;
+    if (inp.id === 'e-nome') { if (usaTeclado()) { inp.blur(); marcarCampo('e-h'); } else $('#e-h').focus(); }
+    else inp.blur();
+  }
+  document.addEventListener('input', e => { if (e.target.dataset?.sug) mostrarSugestoes(e.target); });
+  document.addEventListener('focusin', e => {
+    if (e.target.dataset?.sug) { mostrarSugestoes(e.target); if (e.target.id === 'e-nome') document.body.classList.add('digitando-nome'); }
+  });
+  document.addEventListener('focusout', e => {
+    if (!e.target.dataset?.sug) return;
+    document.body.classList.remove('digitando-nome');
+    const box = $('#' + e.target.dataset.sug); setTimeout(() => { if (box && document.activeElement !== e.target) box.hidden = true; }, 150);
+  });
+  // pointerdown + preventDefault: o toque na sugestão não tira o foco do campo antes da escolha
+  document.addEventListener('pointerdown', e => {
+    const b = e.target.closest('.sug'); if (!b) return;
+    e.preventDefault();
+    const inp = document.querySelector(`[data-sug="${b.parentElement.id}"]`); if (inp) escolherNome(inp, b.dataset.nome);
+  });
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.type === 'file' && el.dataset.a && el.files[0]) { importar(el.dataset.a, el.files[0]).catch(err => toast('Erro: ' + esc(err.message), 'erro')); el.value = ''; }

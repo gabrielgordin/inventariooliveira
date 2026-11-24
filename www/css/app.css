@@ -180,3 +180,12 @@ body.sol .tk.fn { background: #eee !important; }
 #nav-g, #nav-norte { transition: transform .25s linear; }
 .nav-info { font-size: 1.05rem; }
 .nav-chegou { background: var(--bom-f); color: var(--bom); font-weight: 800; font-size: 1.2rem; padding: .6rem; border-radius: 10px; }
+
+/* ---------- sugestões de espécie ---------- */
+.sugestoes { display: flex; gap: .4rem; overflow-x: auto; padding: .1rem 0 .2rem; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.sugestoes[hidden] { display: none; }
+.sug { flex: none; display: inline-flex; flex-direction: column; align-items: flex-start; min-height: 44px; padding: .3rem .75rem; background: var(--claro);
+  color: var(--verde); border: 1px solid var(--verde2); border-radius: 22px; font-size: 1rem; font-weight: 700; line-height: 1.15; }
+.sug i { font-size: .72rem; font-weight: 400; color: var(--mudo); }
+body.digitando-nome .teclado { display: none; }
+body.sol .sug { background: #fff !important; border: 2px solid #000; color: #000; }
