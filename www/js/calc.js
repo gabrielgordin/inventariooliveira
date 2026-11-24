@@ -263,10 +263,32 @@
     return a;
   }
 
+  // ---------- valor muito diferente da média da parcela (erro de digitação) ----------
+  /* reg: o registro a gravar; outros: os demais da parcela. Só avisa com 5+ valores de referência.
+     Eucalipto (plantio uniforme): CAP > 2,2× ou < 0,4× a média; H > 1,7× ou < 0,5×.
+     Cerrado (diâmetros muito variados): só CAP > 5× a média. */
+  function foraDaMedia(reg, outros, tipo) {
+    const msgs = [], cap = num(reg.CAP), h = num(reg.H);
+    if (reg.falha) return msgs;
+    const caps = outros.filter(o => !o.falha && num(o.CAP) > 0).map(o => +o.CAP);
+    const hs = outros.filter(o => !o.falha && num(o.H) > 0).map(o => +o.H);
+    if (cap > 0 && caps.length >= 5) {
+      const m = mean(caps), r = cap / m;
+      if (tipo === 'eucalipto' ? (r > 2.2 || r < 0.4) : r > 5)
+        msgs.push({ campo: 'e-cap', msg: `CAP ${fmtBR(cap)} cm está ${r > 1 ? 'muito acima' : 'muito abaixo'} da média da parcela (${fmtBR(m)} cm).` });
+    }
+    if (tipo === 'eucalipto' && h > 0 && hs.length >= 5) {
+      const m = mean(hs), r = h / m;
+      if (r > 1.7 || r < 0.5) msgs.push({ campo: 'e-h', msg: `Altura ${fmtBR(h)} m está ${r > 1 ? 'muito acima' : 'muito abaixo'} da média da parcela (${fmtBR(m)} m).` });
+    }
+    return msgs;
+  }
+  const fmtBR = v => (Math.round(v * 10) / 10).toString().replace('.', ',');
+
   const api = {
     tinv, mean, variance, sum, dapDeCap, gDeCap, volEquacao, regressao,
     parcelaEucalipto, parcelaCerrado, arvoreCerrado, estatistica, estratificada,
-    fitossociologia, classesDap, alertasArvore
+    fitossociologia, classesDap, alertasArvore, foraDaMedia
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Calc = api;
 })(typeof window !== 'undefined' ? window : globalThis);

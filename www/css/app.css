@@ -58,7 +58,6 @@ button.item:not(.parcela):not(.arv) { grid-template-columns: 1fr; }
 .item.parcela .num, .item.arv .num { font-variant-numeric: tabular-nums; font-size: .92rem; text-align: right; }
 .item.ponto { grid-template-columns: 1fr auto; }
 .item.ponto > span:nth-child(2) { grid-column: 1; }
-.item.ponto button { grid-row: 1 / span 2; grid-column: 2; }
 .item.excluida { opacity: .55; }
 .item.sel { outline: 3px solid #8fc595; }
 .item.fuste { margin-left: 1.4rem; width: calc(100% - 1.4rem); }
@@ -121,3 +120,63 @@ button.item:not(.parcela):not(.arv) { grid-template-columns: 1fr; }
 .item-proj { display: grid; grid-template-columns: 1fr auto; gap: .4rem; align-items: stretch; }
 .lixeira { background: transparent; border: 1px solid var(--borda); color: var(--ruim); font-size: 1.25rem; width: 52px; padding: 0; }
 button.perigo-cheio { background: var(--ruim); color: #fff; }
+
+/* ---------- botão e modo sol forte ---------- */
+.sol-btn { background: transparent; border: 1px solid #ffffff66; color: #fff; font-size: 1.25rem; min-height: 40px; width: 44px; padding: 0; }
+.sol-btn.on { background: #ffd54f; color: #000; border-color: #ffd54f; }
+body.sol { --texto: #000; --mudo: #1f1f1f; --borda: #000; --fundo: #fff; --claro: #fff; --verde: #0b3d12; --verde2: #0b3d12;
+  --ruim: #a00000; --ruim-f: #ffe0e0; --bom: #004d00; --bom-f: #d8f5d8; --medio: #5a3c00; --medio-f: #fff0c0; color-scheme: light; font-size: 19px; }
+body.sol, body.sol main { background: #fff; color: #000; }
+body.sol .cartao, body.sol .item, body.sol input, body.sol select, body.sol .modal { background: #fff !important; color: #000; border-width: 2px; border-color: #000; }
+body.sol .mudo { color: #1f1f1f; font-weight: 500; }
+body.sol button, body.sol .botao { font-weight: 800; }
+body.sol button.sec, body.sol .botao.sec { background: #fff; color: #0b3d12; border: 2px solid #0b3d12; }
+body.sol header { background: #0b3d12; }
+body.sol input, body.sol select { font-size: 1.25rem; font-weight: 600; }
+body.sol .tag { border: 1px solid currentColor; }
+body.sol .abas button { border: 2px solid #0b3d12; }
+body.sol .placar b { font-size: 1.7rem; }
+
+/* ---------- fotos ---------- */
+.linha-fotos { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .5rem; }
+.fotos { display: flex; gap: .4rem; overflow-x: auto; }
+.fotos img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--borda); cursor: pointer; flex: none; }
+.foto-grande { width: 100%; max-height: 60vh; object-fit: contain; border-radius: 8px; background: #000; }
+.item.ponto { grid-template-columns: 1fr auto; }
+.item.ponto .fotos { grid-column: 1 / -1; }
+.botoes-ponto { display: flex; gap: .3rem; grid-row: 1 / span 2; grid-column: 2; align-self: center; }
+
+/* ---------- teclado numérico do app ---------- */
+.teclado { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; background: #e7ece4; border-top: 1px solid var(--borda);
+  padding: .4rem .4rem max(.4rem, env(safe-area-inset-bottom)); box-shadow: 0 -4px 14px #0002; }
+.teclado > div { max-width: 760px; margin: 0 auto; }
+.tk-grade { display: grid; grid-template-columns: repeat(4, 1fr); gap: .35rem; }
+.tk { min-height: 54px; font-size: 1.6rem; font-weight: 700; background: #fff; color: var(--texto); border: 1px solid #c9d1c4; border-radius: 10px; padding: 0; }
+.tk.fn { font-size: 1.05rem; background: #d9e3d5; color: var(--verde); }
+.tk.zero { grid-column: span 2; }
+.tk:active { background: var(--verde); color: #fff; }
+.tk-acoes { display: flex; gap: .35rem; margin-top: .35rem; }
+.tk-acoes > button { flex: 1 1 0; min-height: 52px; }
+body.com-teclado main { padding-bottom: 360px; }
+body.com-teclado .acoes-form { display: none; }
+input.campo-ativo { outline: 4px solid #f9a825; border-color: #f9a825; background: #fffbe6; }
+input[data-tecl] { caret-color: transparent; cursor: pointer; }
+@media (prefers-color-scheme: dark) { .teclado { background: #1a201a; } .tk { background: #263026; color: #e7ece4; border-color: #344034; } .tk.fn { background: #2e3a2e; color: #9ccc65; } }
+body.sol .teclado { background: #fff; border-top: 2px solid #000; }
+body.sol .tk { background: #fff !important; color: #000 !important; border: 2px solid #000; }
+body.sol .tk.fn { background: #eee !important; }
+
+.m-rot3 { fill: #0d47a1; font-weight: 700; text-anchor: middle; paint-order: stroke; stroke: #fff; stroke-width: .25px; }
+
+/* ---------- navegação até a parcela ---------- */
+.navegar { align-items: stretch; text-align: center; }
+.nav-alvo { font-size: 1.2rem; }
+.nav-dist { font-size: 3.4rem; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--verde); line-height: 1.1; }
+.nav-dist.perto { color: #1e6b2a; }
+#nav-seta { width: min(70vw, 300px); height: min(70vw, 300px); margin: 0 auto; display: block; }
+.nav-aro { fill: var(--claro); stroke: var(--borda); stroke-width: 3; }
+.nav-ponta { fill: #e65100; stroke: #fff; stroke-width: 4; }
+.nav-n { fill: #b3261e; font-size: 28px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; }
+#nav-g, #nav-norte { transition: transform .25s linear; }
+.nav-info { font-size: 1.05rem; }
+.nav-chegou { background: var(--bom-f); color: var(--bom); font-weight: 800; font-size: 1.2rem; padding: .6rem; border-radius: 10px; }

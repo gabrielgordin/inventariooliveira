@@ -30,7 +30,7 @@
   function utm(lat, lon, zona) { const u = Geo.paraUTM(lat, lon, zona); return [r(u.E, 2), r(u.N, 2)]; }
 
   // ---------- XLSX ----------
-  function planilhaXLSX(proj, parcelas, pontos, R) {
+  function planilhaXLSX(proj, parcelas, pontos, R, fotos = []) {
     const wb = XLSX.utils.book_new();
     const add = (nome, linhas) => {
       const ws = XLSX.utils.aoa_to_sheet(linhas);
@@ -119,8 +119,40 @@
     add('Vertices', vert);
     add('Pontos', [['Tipo', 'Nome / espécie', 'Situação', 'Latitude', 'Longitude', 'E (m)', 'N (m)', 'Precisão (m)', 'Data/hora', 'Parcela', 'Observação'],
       ...pontos.map(p => [p.tipo, p.especie || p.nome || '', p.situacao || '', r(p.lat, 7), r(p.lon, 7), ...utm(p.lat, p.lon, z), r(p.acc, 1), p.hora || '', p.parcela || '', p.obs || ''])]);
+    if (fotos.length) add('Fotos', linhasFotos(proj, parcelas, pontos, fotos));
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+
+  // ---------- fotos ----------
+  /* Nome de arquivo de cada foto: P001_parcela_1.jpg, P001_arvore12_1.jpg, ponto_pequi_2.jpg (sem vírgula) */
+  function nomesFotos(proj, parcelas, pontos, fotos) {
+    const cont = {}, out = new Map();
+    const ord = [...fotos].sort((a, b) => String(a.hora).localeCompare(String(b.hora)));
+    ord.forEach(f => {
+      const pc = parcelas.find(p => p.id === f.parcelaId), pt = pontos.find(p => p.id === f.pontoId);
+      let base;
+      if (f.arvoreId && pc) {
+        const i = pc.arvores.findIndex(a => a.id === f.arvoreId), a = pc.arvores[i];
+        base = `P${pc.numero}_arvore${proj.tipo === 'eucalipto' ? (a?.arvore ?? i + 1) : i + 1}`;
+      } else if (pc) base = `P${pc.numero}_parcela`;
+      else if (pt) base = `ponto_${pt.especie || pt.nome || 'sem_nome'}`;
+      else base = 'foto';
+      base = semVirgula(base).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      cont[base] = (cont[base] || 0) + 1;
+      out.set(f.id, `${base}_${cont[base]}.jpg`);
+    });
+    return out;
+  }
+  function linhasFotos(proj, parcelas, pontos, fotos) {
+    const nomes = nomesFotos(proj, parcelas, pontos, fotos);
+    return [['Arquivo', 'Tipo', 'Parcela', 'Árvore', 'Ponto', 'Latitude', 'Longitude', 'Data/hora', 'Legenda'],
+      ...fotos.map(f => {
+        const pc = parcelas.find(p => p.id === f.parcelaId), pt = pontos.find(p => p.id === f.pontoId);
+        const i = pc && f.arvoreId ? pc.arvores.findIndex(a => a.id === f.arvoreId) : -1;
+        return [nomes.get(f.id), f.tipo, pc?.numero || pt?.parcela || '', i >= 0 ? (proj.tipo === 'eucalipto' ? pc.arvores[i].arvore : i + 1) : '',
+          pt ? (pt.especie || pt.nome || '') : '', r(f.lat, 7) ?? '', r(f.lon, 7) ?? '', f.hora || '', f.legenda || ''];
+      })];
   }
 
   // ---------- CSV (uma linha por árvore/fuste) ----------
@@ -163,9 +195,9 @@
     }).join('\n');
     return new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(proj.nome)}</name>${estilos}\n${pm}\n</Document></kml>`], { type: 'application/vnd.google-earth.kml+xml' });
   }
-  function backup(proj, parcelas, pontos) {
-    return new Blob([JSON.stringify({ formato: 'inventario-florestal', versao: 1, exportado: new Date().toISOString(), projeto: proj, parcelas, pontos })], { type: 'application/json' });
+  function backup(proj, parcelas, pontos, fotos = []) {
+    return new Blob([JSON.stringify({ formato: 'inventario-florestal', versao: 2, exportado: new Date().toISOString(), projeto: proj, parcelas, pontos, fotos })], { type: 'application/json' });
   }
 
-  root.Exportar = { entregar, nomeArquivo, planilhaXLSX, csv, geojson, kml, backup };
+  root.Exportar = { entregar, nomeArquivo, planilhaXLSX, csv, geojson, kml, backup, nomesFotos, semVirgula };
 })(window);

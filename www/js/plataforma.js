@@ -55,6 +55,45 @@
     catch (e) { if (!/cancel/i.test(e.message || '')) throw e; }
   }
 
+  // ---------- câmera ----------
+  // Devolve a foto como dataURL JPEG (lado maior até 1600 px), ou null se cancelar
+  function reduzir(dataURL, max = 1600, q = 0.72) {
+    return new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height); res(cv.toDataURL('image/jpeg', q));
+      };
+      img.onerror = () => rej(new Error('Imagem inválida')); img.src = dataURL;
+    });
+  }
+  async function tirarFoto() {
+    if (nativo) {
+      try {
+        const f = await P.Camera.getPhoto({ quality: 72, width: 1600, height: 1600, resultType: 'base64', source: 'CAMERA', correctOrientation: true, saveToGallery: false, allowEditing: false });
+        return reduzir(`data:image/${f.format || 'jpeg'};base64,${f.base64String}`);
+      } catch (e) { if (/cancel/i.test(e.message || '')) return null; throw e; }
+    }
+    return new Promise(res => {
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+      inp.onchange = () => {
+        const f = inp.files[0]; if (!f) return res(null);
+        const fr = new FileReader(); fr.onload = () => reduzir(fr.result).then(res, () => res(null)); fr.readAsDataURL(f);
+      };
+      inp.click();
+    });
+  }
+  // grava um arquivo base64 numa subpasta de Documentos/Inventario, sem perguntar nada
+  async function salvarSilencioso(dataB64, caminho) {
+    if (!nativo) return null;
+    const r = await P.Filesystem.writeFile({ path: `Inventario/${caminho}`, data: dataB64, directory: 'DOCUMENTS', recursive: true });
+    return r.uri;
+  }
+
+  // ---------- vibração curta ao tocar nas teclas ----------
+  function vibrar() { try { navigator.vibrate && navigator.vibrate(12); } catch (e) { /* sem suporte */ } }
+
   // ---------- botão voltar do Android ----------
   function aoVoltar(fn) {
     if (!nativo) return false;
@@ -62,5 +101,5 @@
     return true;
   }
 
-  root.Plataforma = { nativo, iniciarGPS, manterTela, salvarArquivo, compartilhar, aoVoltar };
+  root.Plataforma = { nativo, iniciarGPS, manterTela, salvarArquivo, salvarSilencioso, compartilhar, aoVoltar, tirarFoto, vibrar, paraBase64 };
 })(window);

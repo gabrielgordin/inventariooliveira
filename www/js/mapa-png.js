@@ -100,7 +100,7 @@
 
     // ---- pontos
     pts.forEach(({ p, u }) => {
-      const cor = (PONTO[p.tipo] || PONTO.outro)[0];
+      const cor = p.tipo === 'planejado' && p.feito ? '#2e7d32' : (PONTO[p.tipo] || PONTO.outro)[0];
       g.beginPath();
       if (p.tipo === 'planejado') { g.moveTo(X(u), Y(u) - 14); g.lineTo(X(u) + 12, Y(u) + 9); g.lineTo(X(u) - 12, Y(u) + 9); g.closePath(); }
       else g.arc(X(u), Y(u), 10, 0, 2 * Math.PI);
@@ -167,7 +167,8 @@
         g.beginPath();
         if (t === 'planejado') { g.moveTo(lx + 22, ly - 14); g.lineTo(lx + 34, ly + 9); g.lineTo(lx + 10, ly + 9); g.closePath(); } else g.arc(lx + 22, ly, 10, 0, 2 * Math.PI);
         g.fillStyle = cor; g.fill();
-        texto(`${nome} (${pts.filter(p => p.p.tipo === t).length})`, lx + 60, ly, 25); ly += 46;
+        const L = pts.filter(p => p.p.tipo === t), feitos = t === 'planejado' ? L.filter(p => p.p.feito).length : 0;
+        texto(`${nome} (${L.length}${t === 'planejado' ? ` · ${feitos} feitas` : ''})`, lx + 60, ly, 25); ly += 46;
       });
     }
     ly += 20;

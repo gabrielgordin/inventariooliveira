@@ -1,18 +1,20 @@
 /* Banco local (IndexedDB). Tudo fica no aparelho; nada vai para a internet. */
 (function (root) {
   'use strict';
-  const NOME = 'inventario-florestal', VERSAO = 1;
+  const NOME = 'inventario-florestal', VERSAO = 2;
   let dbp = null;
   function abrir() {
     if (dbp) return dbp;
     dbp = new Promise((res, rej) => {
       const r = indexedDB.open(NOME, VERSAO);
       r.onupgradeneeded = () => {
-        const db = r.result;
-        db.createObjectStore('projetos', { keyPath: 'id' });
-        db.createObjectStore('parcelas', { keyPath: 'id' }).createIndex('projetoId', 'projetoId');
-        db.createObjectStore('pontos', { keyPath: 'id' }).createIndex('projetoId', 'projetoId');
-        db.createObjectStore('config', { keyPath: 'chave' });
+        // cria só o que falta: quem já tem a versão 1 ganha a tabela de fotos sem perder nada
+        const db = r.result, tem = n => db.objectStoreNames.contains(n);
+        if (!tem('projetos')) db.createObjectStore('projetos', { keyPath: 'id' });
+        if (!tem('parcelas')) db.createObjectStore('parcelas', { keyPath: 'id' }).createIndex('projetoId', 'projetoId');
+        if (!tem('pontos')) db.createObjectStore('pontos', { keyPath: 'id' }).createIndex('projetoId', 'projetoId');
+        if (!tem('config')) db.createObjectStore('config', { keyPath: 'chave' });
+        if (!tem('fotos')) db.createObjectStore('fotos', { keyPath: 'id' }).createIndex('projetoId', 'projetoId');
       };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);

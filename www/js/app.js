@@ -22,7 +22,8 @@
       prob: 0.9, erroAdm: 0.1, fatorEmp: 1.5, desvio: 'amostral', fpc: true, metodo: 'padrao', usarHMedida: false, espacamento: '', segundosGPS: 10 }
   };
 
-  const S = { view: 'home', aba: 'parcelas', projeto: null, parcelas: [], pontos: [], parcelaId: null, editando: null, extras: [], equipe: '', mapa: null };
+  const S = { view: 'home', aba: 'parcelas', projeto: null, parcelas: [], pontos: [], fotos: [], parcelaId: null, editando: null, extras: [], equipe: '', mapa: null,
+    sol: false, teclado: true, campo: null, sujo: false, alvoId: null };
 
   // ---------------- utilidades de domínio ----------------
   const imune = nome => { const n = semAcento(nome); return n ? (IMUNES.find(i => n.startsWith(i.chave)) || null) : null; };
@@ -104,6 +105,7 @@
       Plataforma.iniciarGPS(p => {
         this.pos = p; this.erro = null; this.leituras.push(p); if (this.leituras.length > 900) this.leituras.shift(); chipGPS();
         if (S.view === 'projeto' && S.aba === 'mapa') Mapa.posicao();
+        if (S.view === 'navegar') atualizarNav();
       }, msg => { this.erro = msg; chipGPS(); });
     },
     capturar(segundos, titulo) {
@@ -162,29 +164,38 @@
     S.projeto = await DB.pegar('projetos', id);
     S.parcelas = (await DB.porProjeto('parcelas', id)).sort(ordNum);
     S.pontos = await DB.porProjeto('pontos', id);
+    S.fotos = await DB.porProjeto('fotos', id);
     S.view = 'projeto'; S.aba = S.aba || 'parcelas';
     await DB.config('ultimoProjeto', id);
     render();
   }
   const salvarProjeto = () => DB.salvar('projetos', S.projeto);
-  async function salvarParcela(pc) { pc.autor = pc.autor || S.equipe; await DB.salvar('parcelas', pc); const i = S.parcelas.findIndex(x => x.id === pc.id); if (i < 0) S.parcelas.push(pc); S.parcelas.sort(ordNum); }
-  async function salvarPonto(pt) { pt.autor = pt.autor || S.equipe; await DB.salvar('pontos', pt); if (!S.pontos.find(x => x.id === pt.id)) S.pontos.push(pt); }
+  async function salvarParcela(pc) { pc.autor = pc.autor || S.equipe; S.sujo = true; await DB.salvar('parcelas', pc); const i = S.parcelas.findIndex(x => x.id === pc.id); if (i < 0) S.parcelas.push(pc); S.parcelas.sort(ordNum); }
+  async function salvarPonto(pt) { pt.autor = pt.autor || S.equipe; S.sujo = true; await DB.salvar('pontos', pt); if (!S.pontos.find(x => x.id === pt.id)) S.pontos.push(pt); }
   const parcelaAtual = () => S.parcelas.find(x => x.id === S.parcelaId);
 
   // ---------------- render ----------------
   function render() {
     const app = $('#app');
-    const titulo = S.view === 'home' ? 'Inventário Florestal' : S.view === 'novo' ? 'Novo inventário' : S.view === 'parcela' ? `Parcela ${esc(parcelaAtual()?.numero)}` : esc(S.projeto?.nome || 'Projeto');
+    const titulo = S.view === 'home' ? 'Inventário Florestal' : S.view === 'novo' ? 'Novo inventário' : S.view === 'parcela' ? `Parcela ${esc(parcelaAtual()?.numero)}` : S.view === 'navegar' ? 'Ir até a parcela' : esc(S.projeto?.nome || 'Projeto');
     const voltar = S.view !== 'home' ? `<button class="voltar" data-a="voltar" aria-label="Voltar">‹</button>` : '';
     let corpo = '';
     if (S.view === 'home') corpo = telaHome();
     else if (S.view === 'novo') corpo = telaConfig(true);
     else if (S.view === 'projeto') corpo = telaProjeto();
     else if (S.view === 'parcela') corpo = telaParcela();
+    else if (S.view === 'navegar') corpo = telaNavegar();
     const ajustes = S.view === 'parcela' ? `<button class="engrenagem" data-a="ir-ajustes" aria-label="Ajustes do inventário" title="Ajustes do inventário (KML, estratos, parâmetros)">⚙</button>` : '';
-    app.innerHTML = `<header>${voltar}<h1>${titulo}</h1><span id="chip-gps" class="chip">GPS…</span>${ajustes}</header><main>${corpo}</main>`;
+    const sol = `<button class="sol-btn ${S.sol ? 'on' : ''}" data-a="sol" aria-label="Modo sol forte" title="Modo sol forte (alto contraste)">☀</button>`;
+    app.innerHTML = `<header>${voltar}<h1>${titulo}</h1><span id="chip-gps" class="chip">GPS…</span>${sol}${ajustes}</header><main>${corpo}</main>`;
     chipGPS();
-    if (S.view === 'parcela') { manterTela(true); focarEntrada(); } else manterTela(false);
+    document.body.classList.toggle('com-teclado', usaTeclado() && !S.tecladoPausa);
+    if (S.view !== 'parcela') S.tecladoPausa = false;
+    if (S.view === 'parcela') {
+      manterTela(true);
+      if (usaTeclado() && !S.tecladoPausa) marcarCampo(S.campo && $('#' + S.campo) ? S.campo : camposOrdem()[0]); else focarEntrada();
+    } else manterTela(S.view === 'navegar');
+    if (S.view === 'navegar') { Bussola.ligar(); atualizarNav(); } else Bussola.desligar();
     if (S.view === 'projeto' && S.aba === 'mapa') Mapa.montar();
   }
 
@@ -197,17 +208,23 @@
         <label>Nome de quem coleta neste aparelho<input id="equipe" value="${esc(S.equipe)}" placeholder="ex.: Gabriel"></label>
         <p class="mudo">Vai junto em cada parcela, para juntar os dados de dois aparelhos depois.</p>
         <button class="sec" data-a="salvar-equipe">Salvar</button>
+        <label class="check"><input type="checkbox" id="pref-teclado" ${S.teclado ? 'checked' : ''}> Usar o teclado numérico do app (teclas grandes) no lançamento das árvores</label>
+        <label class="check"><input type="checkbox" id="pref-sol" ${S.sol ? 'checked' : ''}> Modo sol forte (alto contraste e letra maior) — também no botão ☀ do topo</label>
         <p class="mudo" id="armazenamento"></p></details>
       <p class="mudo rodape">Os dados ficam só neste aparelho. Exporte o backup ao fim de cada dia de campo.</p></section>`;
   }
   async function preencherHome() {
     const L = (await DB.todos('projetos')).sort((a, b) => (b.atualizado || 0) - (a.atualizado || 0));
-    const todas = await DB.todos('parcelas');
+    const todas = await DB.todos('parcelas'), todosPts = await DB.todos('pontos');
     const el = $('#lista-projetos'); if (!el) return;
     el.innerHTML = L.length ? L.map(p => {
-      const n = todas.filter(x => x.projetoId === p.id).length;
+      const ps = todas.filter(x => x.projetoId === p.id), n = ps.length;
+      const alterado = Math.max(0, ...ps.map(x => x.atualizado || 0), ...todosPts.filter(x => x.projetoId === p.id).map(x => x.atualizado || 0));
+      const env = p.ultimoBackupEnviado || 0;
+      const bk = !alterado ? '' : env >= alterado ? `<span class="tag bom">backup enviado ${tempoAtras(env)}</span>`
+        : `<span class="tag ruim">${env ? `backup enviado ${tempoAtras(env)} · há dados novos` : 'backup ainda não enviado'}</span>`;
       return `<div class="item-proj"><button class="item" data-a="abrir" data-id="${p.id}"><b>${esc(p.nome)}</b>
-        <span class="mudo">${p.tipo === 'eucalipto' ? 'Reflorestamento' : 'Cerrado'} · ${n} parcela${n === 1 ? '' : 's'} · ${new Date(p.atualizado || p.criado).toLocaleDateString('pt-BR')}</span></button>
+        <span class="mudo">${p.tipo === 'eucalipto' ? 'Reflorestamento' : 'Cerrado'} · ${n} parcela${n === 1 ? '' : 's'} · ${new Date(p.atualizado || p.criado).toLocaleDateString('pt-BR')}</span>${bk}</button>
         <button class="lixeira" data-a="apagar-da-lista" data-id="${p.id}" aria-label="Apagar ${esc(p.nome)}" title="Apagar inventário">🗑</button></div>`;
     }).join('') : '<p class="mudo">Nenhum inventário ainda. Toque em "Novo inventário".</p>';
     if (navigator.storage?.estimate) {
@@ -303,7 +320,13 @@
         <b>${esc(pc.numero)}</b><span>${esc(pc.estrato || 'sem estrato')}${loc}${pc.excluir ? ' <span class="tag">fora do cálculo</span>' : ''}</span>
         <span class="num">${n ?? 0} ${euc ? 'fustes' : 'árv.'} · ${fmt(v, 1)} m³/ha ${pc.fechada ? '✓' : '<span class="tag">aberta</span>'}</span></button>`;
     }).join('');
-    return `${resumoErro(R)}<button class="largo" data-a="nova-parcela">+ Nova parcela</button>
+    const plan = S.pontos.filter(p => p.tipo === 'planejado' && p.plano), feitas = plan.filter(p => p.feito).length;
+    const temPoly = (S.projeto.estratos || []).some(e => e.coords?.length >= 3);
+    const botoesPlano = (temPoly || plan.length) ? `<div class="linha-botoes">
+        ${temPoly ? `<button class="sec" data-a="planejar">🗺 Planejar parcelas</button>` : ''}
+        ${plan.length > feitas ? `<button data-a="navegar">🧭 Ir até a próxima (${plan.length - feitas} faltam)</button>` : ''}</div>
+        ${plan.length ? `<p class="mudo">Plano: ${plan.length} parcelas planejadas · ${feitas} feitas.</p>` : ''}` : '';
+    return `${resumoErro(R)}${botoesPlano}<button class="largo" data-a="nova-parcela">+ Nova parcela</button>
       <div class="lista">${linhas || '<p class="mudo">Nenhuma parcela lançada.</p>'}</div>`;
   }
 
@@ -327,7 +350,8 @@
 
     const cab = `<div class="cartao cab-parcela"><div class="grade2"><label>Nº<input id="p-num" value="${esc(pc.numero)}"></label>
       <label>Estrato<select id="p-estr"><option value="">—</option>${estrOpts}</select></label></div>
-      <label>Observação<input id="p-obs" value="${esc(pc.obs || '')}" placeholder="ex.: ponto d'água a 20 m"></label></div>`;
+      <label>Observação<input id="p-obs" value="${esc(pc.obs || '')}" placeholder="ex.: ponto d'água a 20 m"></label>
+      <div class="linha-fotos"><button class="sec mini" data-a="foto" data-tipo="parcela">📷 Foto da parcela</button>${miniaturas(S.fotos.filter(f => f.parcelaId === pc.id && !f.arvoreId))}</div></div>`;
 
     const resumo = euc
       ? `<div class="resumo"><span><b>${r.nArvores}</b> árv.</span><span><b>${r.nFustes}</b> fustes</span><span><b>${r.nFalhas}</b> falhas</span><span><b>${r.nComH}</b> c/ H</span><span><b>${fmt(r.ha[P.metodo], 1)}</b> m³/ha</span></div>
@@ -338,25 +362,64 @@
 
     const ed = S.editando, edA = ed ? pc.arvores.find(a => a.id === ed) : null;
     const form = euc ? `<div class="entrada cartao" id="entrada">
-        <div class="grade2"><label>CAP (cm)<input id="e-cap" inputmode="decimal" enterkeyhint="next" value="${esc(edA?.CAP ?? '')}"></label>
-        <label>H (m)<input id="e-h" inputmode="decimal" enterkeyhint="done" placeholder="opcional" value="${esc(edA?.H ?? '')}"></label></div>
-        ${edA ? `<div class="linha-botoes"><button data-a="salvar-edicao">Salvar alteração</button><button class="sec" data-a="cancelar-edicao">Cancelar</button><button class="perigo" data-a="del-arvore">Excluir</button></div>`
-        : `<div class="linha-botoes tres"><button data-a="add-euc" data-m="nova">Árvore</button><button class="sec" data-a="add-euc" data-m="fuste">+ Fuste</button><button class="sec" data-a="add-euc" data-m="falha">Falha</button></div>`}
+        <div class="grade2"><label>CAP (cm)<input id="e-cap"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="next" value="${esc(edA?.CAP ?? '')}"></label>
+        <label>H (m)<input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="done" placeholder="opcional" value="${esc(edA?.H ?? '')}"></label></div>
+        ${edA ? `<div class="linha-botoes"><button data-a="salvar-edicao">Salvar alteração</button><button class="sec" data-a="cancelar-edicao">Cancelar</button><button class="perigo" data-a="del-arvore">Excluir</button></div>${fotosArvoreHTML(edA)}`
+        : `<div class="linha-botoes tres acoes-form"><button data-a="add-euc" data-m="nova">Árvore</button><button class="sec" data-a="add-euc" data-m="fuste">+ Fuste</button><button class="sec" data-a="add-euc" data-m="falha">Falha</button></div>`}
       </div>`
       : `<div class="entrada cartao" id="entrada">
         <label>Espécie (nome popular)<input id="e-nome" list="dl-esp" autocomplete="off" enterkeyhint="next" value="${esc(edA?.nome ?? '')}"></label>
         <datalist id="dl-esp">${listaEspecies().map(e => `<option value="${esc(e)}">`).join('')}</datalist>
-        <div class="grade2"><label>H (m)<input id="e-h" inputmode="decimal" enterkeyhint="next" value="${esc(edA?.H ?? '')}"></label>
-        <label>CAP (cm)<input id="e-cap" inputmode="decimal" enterkeyhint="done" value="${esc(edA?.CAP ?? '')}"></label></div>
-        <div id="extras">${S.extras.map((v, i) => `<label class="extra">CAP fuste ${i + 2}<input data-extra="${i}" inputmode="decimal" value="${esc(v ?? '')}"></label>`).join('')}</div>
-        <div class="linha-botoes">${edA ? `<button data-a="salvar-edicao">Salvar alteração</button><button class="sec" data-a="cancelar-edicao">Cancelar</button><button class="perigo" data-a="del-arvore">Excluir</button>`
-        : `<button data-a="add-cerrado">Gravar árvore</button>`}<button class="sec" data-a="add-extra">+ Fuste</button></div></div>`;
+        <div class="grade2"><label>H (m)<input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="next" value="${esc(edA?.H ?? '')}"></label>
+        <label>CAP (cm)<input id="e-cap"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="done" value="${esc(edA?.CAP ?? '')}"></label></div>
+        <div id="extras">${S.extras.map((v, i) => `<label class="extra">CAP fuste ${i + 2}<input id="e-x${i}" data-extra="${i}"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} value="${esc(v ?? '')}"></label>`).join('')}</div>
+        <div class="linha-botoes ${edA ? '' : 'acoes-form'}">${edA ? `<button data-a="salvar-edicao">Salvar alteração</button><button class="sec" data-a="cancelar-edicao">Cancelar</button><button class="perigo" data-a="del-arvore">Excluir</button>`
+        : `<button data-a="add-cerrado">Gravar árvore</button>`}<button class="sec" data-a="add-extra">+ Fuste</button></div>${edA ? fotosArvoreHTML(edA) : ''}</div>`;
 
     const lista = euc ? listaEuc(pc, r) : listaCerrado(pc, r, P);
     return `${cab}${vert}${resumo}${form}<div class="lista arvores">${lista}</div>
       <div class="linha-botoes fim"><button class="${pc.fechada ? 'sec' : ''}" data-a="fechar-parcela">${pc.fechada ? 'Reabrir parcela' : 'Fechar parcela'}</button>
       <button class="sec" data-a="excluir-calculo">${pc.excluir ? 'Voltar ao cálculo' : 'Tirar do cálculo'}</button>
-      <button class="perigo" data-a="apagar-parcela">Apagar parcela</button></div>`;
+      <button class="perigo" data-a="apagar-parcela">Apagar parcela</button></div>${usaTeclado() ? tecladoHTML(euc, !!edA) : ''}`;
+  }
+  // ----- teclado numérico do app -----
+  const usaTeclado = () => S.teclado && !S.tecladoPausa && S.view === 'parcela';
+  function tecladoHTML(euc, edit) {
+    const k = (t, v, cls = '') => `<button class="tk ${cls}" data-tk="${v}">${t}</button>`;
+    const acoes = edit ? `<button data-a="salvar-edicao" class="tk-acao">Salvar alteração</button><button data-a="cancelar-edicao" class="tk-acao sec">Cancelar</button>`
+      : euc ? `<button data-a="add-euc" data-m="nova" class="tk-acao">Árvore</button><button data-a="add-euc" data-m="fuste" class="tk-acao sec">+ Fuste</button><button data-a="add-euc" data-m="falha" class="tk-acao sec">Falha</button>`
+        : `<button data-a="add-cerrado" class="tk-acao">Gravar árvore</button><button data-a="add-extra" class="tk-acao sec">+ Fuste</button>`;
+    return `<div class="teclado" id="teclado"><div class="tk-grade">
+      ${k('7', '7')}${k('8', '8')}${k('9', '9')}${k('⌫', 'del', 'fn')}
+      ${k('4', '4')}${k('5', '5')}${k('6', '6')}${k(',', ',', 'fn')}
+      ${k('1', '1')}${k('2', '2')}${k('3', '3')}${k('Próx. ›', 'prox', 'fn')}
+      ${k('0', '0', 'zero')}${k('Limpar', 'limpar', 'fn')}${k('⌨', 'android', 'fn')}
+      </div><div class="tk-acoes">${acoes}</div></div>`;
+  }
+  function camposOrdem() {
+    const ex = [...document.querySelectorAll('[data-extra]')].map(i => i.id);
+    return S.projeto.tipo === 'eucalipto' ? ['e-cap', 'e-h'] : ['e-h', 'e-cap', ...ex];
+  }
+  function marcarCampo(id) {
+    document.querySelectorAll('.campo-ativo').forEach(e => e.classList.remove('campo-ativo'));
+    const el = $('#' + id); if (!el) return;
+    S.campo = id; el.classList.add('campo-ativo');
+  }
+  function teclar(v) {
+    Plataforma.vibrar();
+    const id = S.campo && $('#' + S.campo) ? S.campo : camposOrdem()[0], el = $('#' + id);
+    if (!el) return;
+    if (v === 'prox') { const o = camposOrdem(); marcarCampo(o[(o.indexOf(id) + 1) % o.length]); return; }
+    if (v === 'android') { // volta ao teclado do Android só nesta tela, até sair dela
+      S.tecladoPausa = true; render(); $('#' + (S.campo || 'e-cap'))?.focus(); return;
+    }
+    let t = el.value;
+    if (v === 'del') t = t.slice(0, -1);
+    else if (v === 'limpar') t = '';
+    else if (v === ',') { if (!t.includes(',') && !t.includes('.')) t = (t || '0') + ','; }
+    else if (t.replace(/[^0-9]/g, '').length < 6) t += v;
+    el.value = t;
+    if (el.dataset.extra != null) S.extras[+el.dataset.extra] = numIn(t);
   }
   function listaEspecies() {
     const m = new Map(); const add = n => { if (n && !m.has(chaveEsp(n))) m.set(chaveEsp(n), n); };
@@ -369,7 +432,7 @@
     return [...pc.arvores].map((a, i) => ({ a, i })).reverse().map(({ a, i }) => {
       const c = r.arvores[i].c, al = Calc.alertasArvore(a, pc.arvores[i - 1], P, 'cerrado'), im = imune(a.nome);
       return `<button class="item arv ${c.incluida ? '' : 'excluida'} ${S.editando === a.id ? 'sel' : ''}" data-a="editar" data-id="${a.id}">
-        <span class="n">${i + 1}</span><span><b>${esc(a.nome || '(sem nome)')}</b>${im ? ' <span class="tag ruim">imune</span>' : ''}${alertasHTML(al.filter(x => x.nivel !== 'info'))}</span>
+        <span class="n">${i + 1}</span><span><b>${esc(a.nome || '(sem nome)')}</b>${im ? ' <span class="tag ruim">imune</span>' : ''}${iconeFoto(a.id)}${alertasHTML(al.filter(x => x.nivel !== 'info'))}</span>
         <span class="num">H ${fmt(a.H, 1)} · CAP ${fmt(a.CAP, 0)}${(a.fustesExtras || []).length ? ` +${a.fustesExtras.length}` : ''}</span></button>`;
     }).join('');
   }
@@ -378,11 +441,12 @@
     const cont = {};
     const L = pc.arvores.map((a, i) => { cont[a.arvore] = (cont[a.arvore] || 0) + 1; return { a, i, f: cont[a.arvore] }; });
     // árvore mais recente no topo, com os fustes logo abaixo dela
-    const grupos = []; L.forEach(x => { if (x.f === 1 || !grupos.length) grupos.push([x]); else grupos[grupos.length - 1].push(x); });
+    const porArv = new Map(); L.forEach(x => { const k = x.a.falha ? 'f' + x.a.id : x.a.arvore; if (!porArv.has(k)) porArv.set(k, []); porArv.get(k).push(x); });
+    const grupos = [...porArv.values()];
     return grupos.reverse().flat().map(({ a, i, f }) => {
       const al = Calc.alertasArvore(a, pc.arvores[i - 1], P, 'eucalipto').filter(x => x.nivel !== 'info');
       return `<button class="item arv ${a.falha ? 'excluida' : ''} ${f > 1 ? 'fuste' : ''} ${S.editando === a.id ? 'sel' : ''}" data-a="editar" data-id="${a.id}">
-        <span class="n">${f > 1 ? '↳' : a.arvore}</span><span>${a.falha ? '<b>Falha</b>' : f > 1 ? `fuste ${f}` : ''}${alertasHTML(al)}</span>
+        <span class="n">${f > 1 ? '↳' : a.arvore}</span><span>${a.falha ? '<b>Falha</b>' : f > 1 ? `fuste ${f}` : ''}${iconeFoto(a.id)}${alertasHTML(al)}</span>
         <span class="num">${a.falha ? '' : `CAP ${fmt(a.CAP, 0)}${a.H != null ? ` · H ${fmt(a.H, 1)}` : ''}`}</span></button>`;
     }).join('');
   }
@@ -438,8 +502,9 @@
       <div class="linha-botoes"><button data-a="marcar-ponto">Marcar ponto GPS</button>
       <label class="botao sec">Importar GPX<input type="file" accept=".gpx,application/gpx+xml" data-a="importar-gpx" hidden></label></div></div>
       <div class="lista">${L.map(p => `<div class="item ponto"><span><b>${esc(p.especie || p.nome || '—')}</b> <span class="mudo">${tipos[p.tipo] || p.tipo}</span>
-        ${p.situacao ? `<span class="tag ruim">${esc(p.situacao)}</span>` : ''}</span><span class="mudo">${p.hora ? esc(p.hora.slice(5, 16)) : ''} · ±${fmt(p.acc, 1)} m${p.obs ? ' · ' + esc(p.obs) : ''}</span>
-        <button class="mini sec" data-a="del-ponto" data-id="${p.id}">✕</button></div>`).join('') || '<p class="mudo">Nenhum ponto.</p>'}</div>`;
+        ${p.situacao ? `<span class="tag ruim">${esc(p.situacao)}</span>` : ''}${p.tipo === 'planejado' ? (p.feito ? ' <span class="tag bom">feita</span>' : ' <span class="tag">a fazer</span>') : ''}</span><span class="mudo">${p.hora ? esc(p.hora.slice(5, 16)) : ''} · ±${fmt(p.acc, 1)} m${p.obs ? ' · ' + esc(p.obs) : ''}</span>
+        <span class="botoes-ponto">${p.tipo === 'planejado' && !p.feito ? `<button class="mini" data-a="navegar" data-id="${p.id}" title="Ir até este ponto">🧭</button>` : ''}<button class="mini sec" data-a="foto" data-tipo="ponto" data-id="${p.id}" title="Foto do ponto">📷</button><button class="mini sec" data-a="del-ponto" data-id="${p.id}">✕</button></span>
+        ${miniaturas(S.fotos.filter(f => f.pontoId === p.id && !f.arvoreId))}</div>`).join('') || '<p class="mudo">Nenhum ponto.</p>'}</div>`;
   }
 
   // ----- exportar -----
@@ -451,8 +516,11 @@
       <button class="largo sec" data-a="exp" data-f="kml">Mapa: parcelas e pontos (.kml)</button>
       <button class="largo sec" data-a="exp" data-f="geojson">Mapa para o Guru Maps (.geojson)</button>
       <button class="largo sec" data-a="exp" data-f="png">Mapa em imagem (.png)</button>
+      <button class="largo sec" data-a="exp" data-f="fotos">Fotos (${S.fotos.length}) para a pasta</button>
       <p class="mudo">Desenho das áreas do KML com as parcelas numeradas, legenda, escala e coordenadas UTM.</p></div>
       <div class="cartao"><h3>Backup e outro aparelho</h3>
+      ${Plataforma.nativo ? `<p class="mudo">Backup automático: ${S.projeto.ultimoAutoBackup ? `último ${tempoAtras(S.projeto.ultimoAutoBackup)}` : 'ainda nenhum'}, em Documentos/Inventario/backup-automatico. Ele é gravado ao fechar cada parcela e ao sair dela. Fica só no aparelho: mande o backup para fora daqui de vez em quando.</p>` : ''}
+      <p class="mudo">Último backup enviado: ${S.projeto.ultimoBackupEnviado ? tempoAtras(S.projeto.ultimoBackupEnviado) : 'nenhum'}.</p>
       <button class="largo" data-a="exp" data-f="backup">Exportar backup (.json)</button>
       <p class="mudo">Importe o backup de outro aparelho na tela inicial: as parcelas se juntam às deste. Quando a mesma parcela existe nos dois, fica a versão alterada por último.</p></div>`;
   }
@@ -483,10 +551,13 @@
         ${estr.map(e => { const c = Geo.centro(e.p); return `<text class="m-rot" x="${X(c)}" y="${Y(c)}" font-size="${k * 3.2}">${esc(e.nome)}</text>`; }).join('')}
         ${parc.map(({ pc, v }) => v.length >= 3 ? poly(v, 'm-parc') + `<text class="m-rot2" x="${X(Geo.centro(v))}" y="${Y(Geo.centro(v)) - k * 1.5}" font-size="${k * 2.6}">${esc(pc.numero)}</text>`
           : v.map(u => `<circle cx="${X(u)}" cy="${Y(u)}" r="${k * 0.9}" class="m-vert"/>`).join('')).join('')}
-        ${pon.map(({ p, u }) => `<circle cx="${X(u)}" cy="${Y(u)}" r="${k * 0.8}" fill="${cores[p.tipo] || '#555'}" stroke="#fff" stroke-width="${k * 0.2}"/>`).join('')}
+        ${pon.map(({ p, u }) => p.tipo === 'planejado'
+          ? `<polygon points="${X(u)},${Y(u) - k * 1.3} ${X(u) + k * 1.1},${Y(u) + k * 0.8} ${X(u) - k * 1.1},${Y(u) + k * 0.8}" fill="${p.feito ? '#2e7d32' : cores.planejado}" stroke="#fff" stroke-width="${k * 0.2}"/>
+             <text class="m-rot3" x="${X(u)}" y="${Y(u) - k * 1.8}" font-size="${k * 2.2}">${esc(p.nome || '')}</text>`
+          : `<circle cx="${X(u)}" cy="${Y(u)}" r="${k * 0.8}" fill="${cores[p.tipo] || '#555'}" stroke="#fff" stroke-width="${k * 0.2}"/>`).join('')}
         <g id="m-eu"></g></svg>
         <div class="mapa-botoes"><button class="mini" data-a="zoom" data-z="0.6">+</button><button class="mini" data-a="zoom" data-z="1.6">−</button><button class="mini sec" data-a="zoom" data-z="0">⌂</button><button class="mini sec" data-a="zoom" data-z="eu">◎</button><button class="mini sec" data-a="exp" data-f="png" title="Salvar o mapa em imagem">⤓</button></div>
-        <p class="mudo legenda"><span style="color:#2e7d32">■</span> estratos <span style="color:#ef6c00">■</span> parcelas <span style="color:#c62828">●</span> árvores <span style="color:#1565c0">●</span> planejados <span style="color:#0d47a1">◉</span> você</p>`;
+        <p class="mudo legenda"><span style="color:#2e7d32">■</span> estratos <span style="color:#ef6c00">■</span> parcelas <span style="color:#c62828">●</span> árvores <span style="color:#1565c0">▲</span> a fazer <span style="color:#2e7d32">▲</span> feitas <span style="color:#0d47a1">◉</span> você</p>`;
       this.eventos(); this.posicao();
     },
     posicao() {
@@ -525,7 +596,8 @@
     const proj = S.projeto, pc = parcelaAtual();
     switch (a) {
       case 'voltar':
-        if (S.view === 'parcela') { await gravarCabecalho(); S.view = 'projeto'; S.editando = null; S.extras = []; }
+        if (S.view === 'parcela') { await gravarCabecalho(); S.view = 'projeto'; S.editando = null; S.extras = []; if (S.sujo) backupAutomatico(); }
+        else if (S.view === 'navegar') { S.view = 'projeto'; S.aba = 'parcelas'; }
         else if (S.view === 'novo' || S.view === 'projeto') { S.view = 'home'; S.projeto = null; S.aba = 'parcelas'; Mapa.vb = null; }
         render(); if (S.view === 'home') preencherHome(); break;
       case 'novo': S.view = 'novo'; S.novoTipo = 'cerrado'; S.novoEstratos = []; S.novoRasc = null; S.novoZona = null; render(); break;
@@ -591,21 +663,28 @@
         const cap = numIn($('#e-cap').value), h = numIn($('#e-h').value), m = el.dataset.m;
         if (m !== 'falha' && !cap) { toast('Informe o CAP', 'erro'); $('#e-cap').focus(); return; }
         const ult = pc.arvores.length ? Math.max(...pc.arvores.map(x => x.arvore)) : 0;
-        if (m === 'fuste' && !ult) { toast('Lance a árvore antes do fuste', 'erro'); return; }
-        const reg = { id: uid(), arvore: m === 'fuste' ? ult : ult + 1, falha: m === 'falha', CAP: m === 'falha' ? null : cap, H: m === 'falha' ? null : h };
+        // o fuste vai para a última árvore viva (nunca para uma falha)
+        const vivas = pc.arvores.filter(x => !x.falha), ultViva = vivas.length ? vivas[vivas.length - 1].arvore : 0;
+        if (m === 'fuste' && !ultViva) { toast('Lance a árvore antes do fuste', 'erro'); return; }
+        const reg = { id: uid(), arvore: m === 'fuste' ? ultViva : ult + 1, falha: m === 'falha', CAP: m === 'falha' ? null : cap, H: m === 'falha' ? null : h };
+        if (!(await conferirMedia(reg, pc.arvores, 'eucalipto'))) return;
         const al = Calc.alertasArvore(reg, pc.arvores[pc.arvores.length - 1], params(proj), 'eucalipto').filter(x => x.nivel !== 'info');
         pc.arvores.push(reg); await salvarParcela(pc);
         if (al.length) toast(al.map(x => '⚠ ' + esc(x.msg)).join('<br>'), 'aviso');
-        S.focar = true; render(); break;
+        S.focar = true; S.campo = null; render(); break;
       }
-      case 'add-extra': S.extras = lerExtras(); S.extras.push(null); guardarRascunho(); render(); restaurarRascunho(); $(`[data-extra="${S.extras.length - 1}"]`)?.focus(); break;
+      case 'add-extra': {
+        S.extras = lerExtras(); S.extras.push(null); guardarRascunho(); render(); restaurarRascunho();
+        const id = `e-x${S.extras.length - 1}`; if (usaTeclado()) marcarCampo(id); else $('#' + id)?.focus(); break;
+      }
       case 'add-cerrado': {
         const reg = lerCerrado(); if (!reg) return;
         reg.id = uid();
+        if (!(await conferirMedia(reg, pc.arvores, 'cerrado'))) return;
         const al = Calc.alertasArvore(reg, pc.arvores[pc.arvores.length - 1], params(proj), 'cerrado');
         pc.arvores.push(reg); S.extras = []; aprenderEspecie(reg.nome); await salvarParcela(pc);
         if (al.length) toast(al.map(x => (x.nivel === 'info' ? 'ℹ ' : '⚠ ') + esc(x.msg)).join('<br>'), 'aviso');
-        S.focar = true; render();
+        S.focar = true; S.campo = null; render();
         const im = imune(reg.nome);
         if (im && confirm(`${im.motivo}.\n\nMarcar agora o ponto GPS desta árvore?`)) await marcarPontoImune(reg, pc, im);
         break;
@@ -615,17 +694,26 @@
         S.editando = el.dataset.id; const a2 = pc.arvores.find(x => x.id === S.editando); S.extras = [...(a2.fustesExtras || [])]; render();
         $('#entrada')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); break;
       }
-      case 'cancelar-edicao': S.editando = null; S.extras = []; render(); break;
+      case 'cancelar-edicao': S.editando = null; S.extras = []; S.campo = null; render(); break;
       case 'salvar-edicao': {
         const a2 = pc.arvores.find(x => x.id === S.editando);
-        if (proj.tipo === 'eucalipto') { a2.CAP = numIn($('#e-cap').value); a2.H = numIn($('#e-h').value); if (a2.CAP) a2.falha = false; }
-        else { const r = lerCerrado(); if (!r) return; Object.assign(a2, r); aprenderEspecie(r.nome); }
+        const outros = pc.arvores.filter(x => x.id !== a2.id);
+        if (proj.tipo === 'eucalipto') {
+          const novo = { CAP: numIn($('#e-cap').value), H: numIn($('#e-h').value) };
+          if (!(await conferirMedia(novo, outros, 'eucalipto'))) return;
+          a2.CAP = novo.CAP; a2.H = novo.H; if (a2.CAP) a2.falha = false;
+        } else {
+          const r = lerCerrado(); if (!r) return;
+          if (!(await conferirMedia(r, outros, 'cerrado'))) return;
+          Object.assign(a2, r); aprenderEspecie(r.nome);
+        }
         S.editando = null; S.extras = []; await salvarParcela(pc); toast('Alterado', 'ok'); render(); break;
       }
-      case 'del-arvore': if (confirm('Excluir este registro?')) { pc.arvores = pc.arvores.filter(x => x.id !== S.editando); S.editando = null; S.extras = []; await salvarParcela(pc); render(); } break;
+      case 'del-arvore': if (confirm('Excluir este registro?')) { await apagarFotos(f => f.arvoreId === S.editando); pc.arvores = pc.arvores.filter(x => x.id !== S.editando); S.editando = null; S.extras = []; await salvarParcela(pc); render(); } break;
       case 'fechar-parcela': {
         await gravarCabecalho(); pc.fechada = !pc.fechada; await salvarParcela(pc);
         if (pc.fechada) {
+          await backupAutomatico();
           if (pc.vertices.length < 3) toast('Parcela fechada sem os vértices completos no GPS.', 'aviso');
           const R = calcular(proj, S.parcelas);
           S.view = 'projeto'; S.aba = 'parcelas'; render();
@@ -635,7 +723,7 @@
       }
       case 'excluir-calculo': pc.excluir = !pc.excluir; await salvarParcela(pc); render(); break;
       case 'apagar-parcela': if (confirm(`Apagar a parcela ${pc.numero} com ${pc.arvores.length} registros?`)) {
-        await DB.apagar('parcelas', pc.id); S.parcelas = S.parcelas.filter(x => x.id !== pc.id); S.view = 'projeto'; render(); } break;
+        await apagarFotos(f => f.parcelaId === pc.id); await DB.apagar('parcelas', pc.id); S.parcelas = S.parcelas.filter(x => x.id !== pc.id); S.view = 'projeto'; render(); } break;
       case 'marcar-ponto': {
         const nome = $('#pt-nome').value.trim(), tipo = $('#pt-tipo').value, obs = $('#pt-obs').value.trim();
         const v = await GPS.capturar(proj.params.segundosGPS ?? 10, `Ponto: ${nome || tipo}`); if (!v) return;
@@ -645,21 +733,222 @@
         if (tipo === 'arvore') aprenderEspecie(nome);
         toast('Ponto marcado', 'ok'); render(); break;
       }
-      case 'del-ponto': if (confirm('Apagar este ponto?')) { await DB.apagar('pontos', el.dataset.id); S.pontos = S.pontos.filter(p => p.id !== el.dataset.id); render(); } break;
+      case 'del-ponto': if (confirm('Apagar este ponto?')) { await apagarFotos(f => f.pontoId === el.dataset.id); await DB.apagar('pontos', el.dataset.id); S.pontos = S.pontos.filter(p => p.id !== el.dataset.id); render(); } break;
       case 'zoom': Mapa.zoom(el.dataset.z); break;
+      case 'sol': await definirSol(!S.sol); break;
+      case 'foto': {
+        const t = el.dataset.tipo;
+        if (t === 'parcela') { await gravarCabecalho(); await novaFoto({ tipo: 'parcela', parcelaId: pc.id }); }
+        else if (t === 'arvore') await novaFoto({ tipo: 'arvore', parcelaId: pc.id, arvoreId: S.editando });
+        else if (t === 'ponto') { const pt = S.pontos.find(x => x.id === el.dataset.id); await novaFoto({ tipo: 'ponto', pontoId: pt.id, parcelaId: pt.parcelaId || null, arvoreId: null }); }
+        break;
+      }
+      case 'ver-foto': verFoto(el.dataset.id); break;
+      case 'planejar': await planejarParcelas(); break;
+      case 'navegar': {
+        const alvo = el.dataset.id || proximoPlanejado()?.id;
+        if (!alvo) return toast('Nenhuma parcela planejada a fazer', 'aviso');
+        S.alvoId = alvo; S.view = 'navegar'; render(); window.scrollTo(0, 0); break;
+      }
+      case 'nav-proxima': { const p = proximoPlanejado(S.alvoId); if (p) { S.alvoId = p.id; render(); } else toast('Não há outra parcela a fazer', 'aviso'); break; }
+      case 'nav-abrir': await abrirParcelaPlanejada(); break;
       case 'exp': await exportar(el.dataset.f); break;
     }
   }
 
+  // Pergunta antes de gravar um valor muito fora da média da parcela. true = pode gravar
+  async function conferirMedia(reg, outros, tipo) {
+    const msgs = Calc.foraDaMedia(reg, outros, tipo);
+    if (!msgs.length) return true;
+    const ok = await simNao('Conferir o valor', `<p>${msgs.map(m => esc(m.msg)).join('<br>')}</p><p class="mudo">Pode ser erro de digitação.</p>`,
+      { nao: 'CORRIGIR', sim: 'GRAVAR ASSIM', perigo: false });
+    if (!ok) { S.campo = msgs[0].campo; const el = $('#' + msgs[0].campo); if (el) { marcarCampo(msgs[0].campo); if (!usaTeclado()) { el.focus(); el.select?.(); } } }
+    return ok;
+  }
+
+  // ----- backup automático (no app Android grava sozinho em Documentos/Inventario/backup-automatico) -----
+  async function backupAutomatico() {
+    if (!Plataforma.nativo || !S.projeto) return;
+    try {
+      const blob = Exportar.backup(S.projeto, S.parcelas, S.pontos, S.fotos);
+      const nome = Exportar.nomeArquivo(S.projeto, 'backup_automatico', 'json');
+      await Plataforma.salvarSilencioso(await Plataforma.paraBase64(blob), `backup-automatico/${nome}`);
+      S.projeto.ultimoAutoBackup = Date.now(); await DB.salvarCru('projetos', S.projeto); S.sujo = false;
+    } catch (e) { console.error(e); toast('Não consegui gravar o backup automático: ' + esc(e.message), 'aviso'); }
+  }
+  const tempoAtras = t => {
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 2 ? 'agora há pouco' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : `há ${Math.round(m / 1440)} dia(s)`;
+  };
+
+  // ----- fotos -----
+  const miniaturas = L => L.length ? `<div class="fotos">${L.map(f => `<img src="${f.data}" alt="foto" loading="lazy" data-a="ver-foto" data-id="${f.id}">`).join('')}</div>` : '';
+  const iconeFoto = arvoreId => { const n = S.fotos.filter(f => f.arvoreId === arvoreId).length; return n ? ` <span class="tag">📷${n > 1 ? n : ''}</span>` : ''; };
+  const fotosArvoreHTML = a => `<div class="linha-fotos"><button class="sec mini" data-a="foto" data-tipo="arvore">📷 Foto desta árvore</button>${miniaturas(S.fotos.filter(f => f.arvoreId === a.id))}</div>`;
+  async function novaFoto(vinc) {
+    let data;
+    try { data = await Plataforma.tirarFoto(); } catch (e) { toast('Câmera: ' + esc(e.message), 'erro'); return; }
+    if (!data) return;
+    const p = GPS.pos?.coords;
+    const f = { id: uid(), projetoId: S.projeto.id, ...vinc, data, hora: agora(), lat: p?.latitude ?? null, lon: p?.longitude ?? null, acc: p?.accuracy ?? null, autor: S.equipe };
+    await DB.salvar('fotos', f); S.fotos.push(f); S.sujo = true;
+    toast('Foto guardada', 'ok'); render();
+  }
+  function verFoto(id) {
+    const f = S.fotos.find(x => x.id === id); if (!f) return;
+    const m = modal(`<img class="foto-grande" src="${f.data}" alt="foto"><p class="mudo">${esc(f.hora || '')}${f.lat != null ? ` · ${fmt(f.lat, 6)}, ${fmt(f.lon, 6)}` : ''}</p>
+      <label>Legenda<input id="foto-leg" value="${esc(f.legenda || '')}" placeholder="opcional"></label>
+      <div class="botoes"><button class="perigo" data-m="apagar">Apagar foto</button><button data-m="ok">Fechar</button></div>`);
+    m.addEventListener('click', async e => {
+      const a = e.target.dataset.m; if (!a) return;
+      const leg = $('#foto-leg', m).value.trim();
+      m.remove();
+      if (a === 'apagar') { if (await simNao('Apagar a foto?', '<p>Não dá para desfazer.</p>')) { await apagarFotos(x => x.id === id); render(); } return; }
+      if (leg !== (f.legenda || '')) { f.legenda = leg; await DB.salvar('fotos', f); }
+    });
+  }
+  async function apagarFotos(filtro) {
+    const L = S.fotos.filter(filtro);
+    for (const f of L) await DB.apagar('fotos', f.id);
+    S.fotos = S.fotos.filter(f => !L.includes(f));
+  }
+  async function exportarFotos() {
+    if (!S.fotos.length) return toast('Nenhuma foto neste inventário', 'aviso');
+    const nomes = Exportar.nomesFotos(S.projeto, S.parcelas, S.pontos, S.fotos);
+    const pasta = Exportar.semVirgula(S.projeto.nome);
+    if (Plataforma.nativo) {
+      for (const f of S.fotos) await Plataforma.salvarSilencioso(f.data.split(',')[1], `fotos/${pasta}/${nomes.get(f.id)}`);
+      toast(`${S.fotos.length} foto(s) salvas em Documentos/Inventario/fotos/${esc(pasta)}`, 'ok');
+    } else {
+      for (const f of S.fotos) { const a = document.createElement('a'); a.href = f.data; a.download = nomes.get(f.id); document.body.appendChild(a); a.click(); a.remove(); await new Promise(r => setTimeout(r, 300)); }
+    }
+  }
+
+  // ----- planejamento das parcelas -----
+  const padNum = n => String(n).padStart(S.projeto.tipo === 'eucalipto' ? 2 : 3, '0');
+  async function planejarParcelas() {
+    const proj = S.projeto, P = params(proj);
+    const est = estratosUTM(proj).map(e => ({ ...e, areaHa: +(proj.estratos.find(x => x.nome === e.nome)?.areaHa) || Geo.areaPoligono(e.poly) / 10000 }));
+    if (!est.length) return toast('Importe o KML das áreas em Ajustes primeiro', 'aviso');
+    const R = calcular(proj, S.parcelas), sug = Math.max(R.est.parcelasNecessarias || 0, est.length * 2, 10);
+    const m = modal(`<h3>Planejar parcelas</h3>
+      <p class="mudo">${est.length} estrato(s) com polígono · ${fmt(est.reduce((s, e) => s + e.areaHa, 0), 2)} ha. As parcelas são divididas entre os estratos pela área (no mínimo 2 em cada).</p>
+      <label>Quantas parcelas?<input id="pl-n" inputmode="numeric" value="${sug}"></label>
+      <label>Como distribuir<select id="pl-m"><option value="sistematico">Sistemática (grade regular)</option><option value="aleatorio">Aleatória (sorteio)</option></select></label>
+      <label>Distância mínima da borda (m)<input id="pl-b" inputmode="decimal" value="${Math.max(P.comprimento, P.largura)}"></label>
+      <div class="botoes"><button class="sec" data-m="cancelar">Cancelar</button><button data-m="gerar">Gerar</button></div>`);
+    const r = await new Promise(res => m.addEventListener('click', e => {
+      const a = e.target.dataset.m; if (!a) return;
+      const o = { n: parseInt($('#pl-n', m).value) || 0, metodo: $('#pl-m', m).value, borda: numIn($('#pl-b', m).value) ?? 0 };
+      m.remove(); res(a === 'gerar' ? o : null);
+    }));
+    if (!r || r.n < 1) return;
+    const antigos = S.pontos.filter(p => p.tipo === 'planejado' && p.plano && !p.feito);
+    if (antigos.length && !(await simNao('Substituir o plano?', `<p>Já existem ${antigos.length} parcela(s) planejada(s) ainda não feitas. Elas serão trocadas pelo plano novo. As já feitas continuam.</p>`, { sim: 'SUBSTITUIR', nao: 'CANCELAR', perigo: false }))) return;
+    for (const p of antigos) await DB.apagar('pontos', p.id);
+    S.pontos = S.pontos.filter(p => !antigos.includes(p));
+    const out = Plano.distribuir(est, { ...r, semente: Date.now() });
+    const z = zona(proj), sul = (proj.estratos.find(e => e.coords?.length)?.coords[0].lat ?? -1) < 0;
+    const usados = new Set([...S.parcelas.map(p => parseInt(p.numero) || 0), ...S.pontos.filter(p => p.tipo === 'planejado').map(p => parseInt(String(p.nome).replace(/\D/g, '')) || 0)]);
+    let num = 1; const plano = uid();
+    for (const pt of out.pontos) {
+      while (usados.has(num)) num++;
+      usados.add(num);
+      const ll = Geo.deUTM(pt.E, pt.N, z, sul);
+      await salvarPonto({ id: uid(), projetoId: proj.id, tipo: 'planejado', plano, nome: 'P' + padNum(num), estrato: pt.estrato, lat: ll.lat, lon: ll.lon, acc: null, hora: '', feito: false });
+    }
+    const falt = out.porEstrato.filter(e => e.geradas < e.pedidas);
+    toast(`${out.pontos.length} parcelas planejadas.${falt.length ? `<br>⚠ ${falt.map(e => `${esc(e.nome)}: ${e.geradas} de ${e.pedidas}`).join('; ')} — área pequena para a borda pedida.` : ''}`, falt.length ? 'aviso' : 'ok');
+    S.aba = 'mapa'; Mapa.vb = null; render();
+  }
+  function proximoPlanejado(excetoId) {
+    const L = S.pontos.filter(p => p.tipo === 'planejado' && !p.feito && p.id !== excetoId);
+    if (!L.length) return null;
+    if (!GPS.pos) return L.sort((a, b) => String(a.nome).localeCompare(String(b.nome)))[0];
+    const z = zona(S.projeto), eu = Geo.paraUTM(GPS.pos.coords.latitude, GPS.pos.coords.longitude, z);
+    return L.map(p => ({ p, d: Geo.dist(eu, Geo.paraUTM(p.lat, p.lon, z)) })).sort((a, b) => a.d - b.d)[0].p;
+  }
+  async function abrirParcelaPlanejada() {
+    const pt = S.pontos.find(p => p.id === S.alvoId); if (!pt) return;
+    const numero = padNum(parseInt(String(pt.nome).replace(/\D/g, '')) || 0);
+    let pc = S.parcelas.find(p => p.id === pt.parcelaId) || S.parcelas.find(p => p.numero === numero);
+    if (!pc) {
+      pc = { id: uid(), projetoId: S.projeto.id, numero, estrato: pt.estrato || '', vertices: [], arvores: [], obs: '', criado: Date.now(), fechada: false, excluir: false, planejadoId: pt.id };
+      await salvarParcela(pc);
+    }
+    pt.feito = true; pt.parcelaId = pc.id; await salvarPonto(pt);
+    S.parcelaId = pc.id; S.view = 'parcela'; S.editando = null; S.extras = []; S.campo = null; render(); window.scrollTo(0, 0);
+    toast(`Parcela ${esc(pc.numero)} aberta. Comece marcando os vértices.`, 'ok');
+  }
+
+  // ----- tela de navegação -----
+  const cardeal = a => ['N', 'NE', 'L', 'SE', 'S', 'SO', 'O', 'NO'][Math.round(a / 45) % 8];
+  function telaNavegar() {
+    const pt = S.pontos.find(p => p.id === S.alvoId);
+    if (!pt) return '<p class="mudo">Ponto não encontrado.</p>';
+    const pend = S.pontos.filter(p => p.tipo === 'planejado' && !p.feito).length;
+    return `<section class="navegar">
+      <div class="nav-alvo">Indo para <b>${esc(pt.nome || pt.especie)}</b>${pt.estrato ? ` · ${esc(pt.estrato)}` : ''}</div>
+      <div class="nav-dist" id="nav-dist">— m</div>
+      <svg id="nav-seta" viewBox="-110 -110 220 220" aria-hidden="true">
+        <circle r="104" class="nav-aro"/><g id="nav-norte"><text y="-82" class="nav-n">N</text></g>
+        <g id="nav-g"><polygon points="0,-88 46,40 0,18 -46,40" class="nav-ponta"/></g></svg>
+      <div id="nav-info" class="nav-info">Aguardando GPS…</div>
+      <div id="nav-chegou" class="nav-chegou" hidden>Você chegou ao ponto.</div>
+      <button class="largo" data-a="nav-abrir">Abrir a parcela ${esc(pt.nome)} aqui</button>
+      <div class="linha-botoes"><button class="sec" data-a="nav-proxima" ${pend > 1 ? '' : 'disabled'}>Outra mais perto ›</button></div>
+      <p class="mudo">Segure o celular deitado, com o topo para a frente. Faltam ${pend} parcela(s) do plano.</p></section>`;
+  }
+  function atualizarNav() {
+    const pt = S.pontos.find(p => p.id === S.alvoId), d = $('#nav-dist'); if (!pt || !d) return;
+    if (!GPS.pos) { $('#nav-info').textContent = GPS.erro || 'Aguardando GPS…'; return; }
+    const z = zona(S.projeto), c = GPS.pos.coords, eu = Geo.paraUTM(c.latitude, c.longitude, z), alvo = Geo.paraUTM(pt.lat, pt.lon, z);
+    const dist = Geo.dist(eu, alvo), az = Geo.azimute(eu, alvo);
+    d.textContent = dist >= 1000 ? `${fmt(dist / 1000, 2)} km` : `${fmt(dist, 0)} m`;
+    let rumo = Bussola.rumo(), fonte = 'bússola';
+    if (rumo == null && c.heading != null && !isNaN(c.heading) && (c.speed || 0) > 0.7) { rumo = c.heading; fonte = 'direção do caminhar'; }
+    const rot = rumo == null ? az : az - rumo;
+    $('#nav-g').setAttribute('transform', `rotate(${rot})`);
+    $('#nav-norte').setAttribute('transform', `rotate(${rumo == null ? 0 : -rumo})`);
+    $('#nav-info').innerHTML = `Rumo <b>${fmt(az, 0)}° ${cardeal(az)}</b> · GPS ±${fmt(c.accuracy, 0)} m<br><span class="mudo">${rumo == null
+      ? 'Sem bússola: a seta mostra o rumo a partir do Norte (N no topo).' : `A seta aponta para o ponto (${fonte}).`}</span>`;
+    const chegou = dist <= Math.max(8, c.accuracy || 0);
+    $('#nav-chegou').hidden = !chegou; d.classList.toggle('perto', chegou);
+    if (chegou && !S.avisouChegada) { S.avisouChegada = pt.id; Plataforma.vibrar(); }
+  }
+  // bússola pelo sensor do aparelho (quando houver), com suavização
+  const Bussola = {
+    valor: null, t: 0, ligado: false,
+    ev(e) {
+      let h = null;
+      if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;
+      else if (e.absolute && e.alpha != null) h = 360 - e.alpha;
+      if (h == null) return;
+      h = (h + (screen.orientation?.angle || 0) + 360) % 360;
+      if (Bussola.valor == null) Bussola.valor = h;
+      else { const d = ((h - Bussola.valor + 540) % 360) - 180; Bussola.valor = (Bussola.valor + d * 0.25 + 360) % 360; }
+      Bussola.t = Date.now();
+      if (S.view === 'navegar') atualizarNav();
+    },
+    ligar() { if (this.ligado) return; this.ligado = true; window.addEventListener('deviceorientationabsolute', this.ev); window.addEventListener('deviceorientation', this.ev); },
+    desligar() { if (!this.ligado) return; this.ligado = false; window.removeEventListener('deviceorientationabsolute', this.ev); window.removeEventListener('deviceorientation', this.ev); },
+    rumo() { return Date.now() - this.t < 2000 ? this.valor : null; }
+  };
+
+  async function definirSol(on) {
+    S.sol = on; document.body.classList.toggle('sol', on); await DB.config('sol', on);
+    document.querySelectorAll('.sol-btn').forEach(b => b.classList.toggle('on', on));
+    const c = $('#pref-sol'); if (c) c.checked = on;
+  }
   function guardarForm() {
     if (!$('#c-nome')) return;
     if (S.view === 'novo') S.novoRasc = lerConfig({ params: S.novoRasc?.params || PRESETS[S.novoTipo], estratos: S.novoEstratos || [], areaHa: S.novoRasc?.areaHa });
     else Object.assign(S.projeto, lerConfig(S.projeto));
   }
   // Janela simples de confirmação com SIM e NÃO
-  function simNao(titulo, html) {
+  function simNao(titulo, html, o = {}) {
     return new Promise(res => {
-      const m = modal(`<h3>${titulo}</h3>${html}<div class="botoes"><button class="sec" data-m="cancelar">NÃO</button><button class="perigo-cheio" data-m="sim">SIM</button></div>`);
+      const m = modal(`<h3>${titulo}</h3>${html}<div class="botoes"><button class="sec" data-m="cancelar">${o.nao || 'NÃO'}</button><button class="${o.perigo === false ? '' : 'perigo-cheio'}" data-m="sim">${o.sim || 'SIM'}</button></div>`);
       m.addEventListener('click', e => { const a = e.target.dataset.m; if (!a) return; m.remove(); res(a === 'sim'); });
     });
   }
@@ -673,6 +962,7 @@
     if (!ok) return false;
     for (const x of parc) await DB.apagar('parcelas', x.id);
     for (const x of pts) await DB.apagar('pontos', x.id);
+    for (const x of await DB.porProjeto('fotos', id)) await DB.apagar('fotos', x.id);
     await DB.apagar('projetos', id);
     toast(`Inventário "${esc(p.nome)}" apagado.`, 'ok');
     return true;
@@ -696,6 +986,10 @@
     const v = await GPS.capturar(S.projeto.params.segundosGPS ?? 10, `${reg.nome} (parcela ${pc.numero})`); if (!v) return;
     await salvarPonto({ id: uid(), projetoId: S.projeto.id, tipo: 'arvore', especie: reg.nome, situacao: 'Imune de corte (Lei MG 20.308/2012) — dentro da parcela', parcela: pc.numero, arvoreId: reg.id, obs: `CAP ${reg.CAP} · H ${reg.H ?? '—'}`, ...v });
     toast('Ponto da árvore marcado', 'ok');
+    if (await simNao('Foto da árvore?', `<p>Tirar agora uma foto de ${esc(reg.nome)}? Ela fica ligada à árvore e ao ponto.</p>`, { sim: 'TIRAR FOTO', nao: 'AGORA NÃO', perigo: false })) {
+      const pt = S.pontos[S.pontos.length - 1];
+      await novaFoto({ tipo: 'arvore', parcelaId: pc.id, arvoreId: reg.id, pontoId: pt?.id || null });
+    }
   }
   function autoEstrato(pc) {
     const g = geoParcela(S.projeto, pc);
@@ -715,12 +1009,16 @@
     const proj = S.projeto, R = calcular(proj, S.parcelas);
     try {
       let blob, nome;
-      if (f === 'xlsx') { blob = Exportar.planilhaXLSX(proj, S.parcelas, S.pontos, R); nome = Exportar.nomeArquivo(proj, 'inventario', 'xlsx'); }
+      if (f === 'fotos') { await exportarFotos(); return; }
+      if (f === 'xlsx') { blob = Exportar.planilhaXLSX(proj, S.parcelas, S.pontos, R, S.fotos); nome = Exportar.nomeArquivo(proj, 'inventario', 'xlsx'); }
       if (f === 'csv') { blob = Exportar.csv(proj, [...S.parcelas].sort(ordNum)); nome = Exportar.nomeArquivo(proj, 'dados', 'csv'); }
       if (f === 'kml') { blob = Exportar.kml(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'kml'); }
       if (f === 'geojson') { blob = Exportar.geojson(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'geojson'); }
       if (f === 'png') { blob = await MapaPNG.gerar(proj, [...S.parcelas].sort(ordNum), S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'png'); }
-      if (f === 'backup') { blob = Exportar.backup(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'backup', 'json'); await DB.config('ultimoBackup', Date.now()); }
+      if (f === 'backup') {
+        blob = Exportar.backup(proj, S.parcelas, S.pontos, S.fotos); nome = Exportar.nomeArquivo(proj, 'backup', 'json');
+        proj.ultimoBackupEnviado = Date.now(); await DB.salvarCru('projetos', proj);
+      }
       await Exportar.entregar(blob, nome);
     } catch (e) { console.error(e); toast('Erro ao exportar: ' + esc(e.message), 'erro'); }
   }
@@ -758,7 +1056,7 @@
       const ex = await DB.pegar('projetos', d.projeto.id);
       let novas = 0, atual = 0, mantidas = 0;
       if (!ex || (d.projeto.atualizado || 0) > (ex.atualizado || 0)) await DB.salvarCru('projetos', ex ? { ...d.projeto, especies: mesclarEsp(ex.especies, d.projeto.especies) } : d.projeto);
-      for (const [store, L] of [['parcelas', d.parcelas], ['pontos', d.pontos]]) for (const r of L) {
+      for (const [store, L] of [['parcelas', d.parcelas], ['pontos', d.pontos], ['fotos', d.fotos || []]]) for (const r of L) {
         const e = await DB.pegar(store, r.id);
         if (!e) { await DB.salvarCru(store, r); novas++; } else if ((r.atualizado || 0) > (e.atualizado || 0)) { await DB.salvarCru(store, r); atual++; } else mantidas++;
       }
@@ -780,9 +1078,17 @@
     const el = e.target.closest('[data-a]'); if (!el || el.tagName === 'INPUT') return;
     e.preventDefault(); acao(el.dataset.a, el).catch(err => { console.error(err); toast('Erro: ' + esc(err.message), 'erro'); });
   });
+  document.addEventListener('click', e => {
+    const k = e.target.closest('[data-tk]'); if (k) { e.preventDefault(); teclar(k.dataset.tk); return; }
+    const c = e.target.closest('[data-tecl]'); if (c) { $('#e-nome')?.blur(); marcarCampo(c.id); }
+  });
+  // no cerrado: escolheu a espécie → fecha o teclado do Android e vai para a altura
+  document.addEventListener('change', e => { if (e.target.id === 'e-nome' && usaTeclado()) { e.target.blur(); marcarCampo('e-h'); } });
   document.addEventListener('change', e => {
     const el = e.target;
     if (el.type === 'file' && el.dataset.a && el.files[0]) { importar(el.dataset.a, el.files[0]).catch(err => toast('Erro: ' + esc(err.message), 'erro')); el.value = ''; }
+    if (el.id === 'pref-sol') definirSol(el.checked);
+    if (el.id === 'pref-teclado') { S.teclado = el.checked; DB.config('teclado', S.teclado); }
     if (el.id === 'p-estr' || el.id === 'p-num' || el.id === 'p-obs') gravarCabecalho().then(() => { if (el.id === 'p-estr') render(); });
   });
   document.addEventListener('keydown', e => {
@@ -792,7 +1098,7 @@
       if (id === 'e-cap') { e.preventDefault(); $('#e-h').focus(); }
       else if (id === 'e-h') { e.preventDefault(); acao(S.editando ? 'salvar-edicao' : 'add-euc', { dataset: { m: 'nova' } }); }
     } else {
-      if (id === 'e-nome') { e.preventDefault(); $('#e-h').focus(); }
+      if (id === 'e-nome') { e.preventDefault(); if (usaTeclado()) { e.target.blur(); marcarCampo('e-h'); } else $('#e-h').focus(); }
       else if (id === 'e-h') { e.preventDefault(); $('#e-cap').focus(); }
       else if (id === 'e-cap' || e.target.dataset.extra != null) { e.preventDefault(); acao(S.editando ? 'salvar-edicao' : 'add-cerrado', e.target); }
     }
@@ -805,6 +1111,8 @@
     if (!Plataforma.nativo && 'serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
     S.equipe = (await DB.config('equipe')) || '';
+    S.teclado = (await DB.config('teclado')) ?? true;
+    S.sol = (await DB.config('sol')) ?? false; document.body.classList.toggle('sol', S.sol);
     if (!Plataforma.aoVoltar(() => {
       const m = document.querySelector('.modal-fundo'); if (m) { m.querySelector('[data-m=cancelar],[data-m=ok]')?.click(); return; }
       if (S.view === 'home') return 'sair';
