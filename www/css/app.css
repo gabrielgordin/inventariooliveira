@@ -71,8 +71,11 @@ button.item:not(.parcela):not(.arv) { grid-template-columns: 1fr; }
 .chip { font-size: .8rem; padding: .25rem .55rem; border-radius: 99px; background: #ffffff30; white-space: nowrap; }
 .chip.bom { background: #c8e6c9; color: #1b5e20; } .chip.medio { background: #ffe0a3; color: #6d4c00; } .chip.ruim { background: #ffcdd2; color: #8e0000; }
 
-.abas { display: flex; gap: .3rem; overflow-x: auto; margin: -.2rem -.2rem .7rem; padding: .2rem; scrollbar-width: none; }
-.abas button { flex: none; min-height: 40px; padding: .4rem .8rem; background: transparent; color: var(--verde); border: 1px solid var(--borda); }
+/* todas as abas à vista: 3 por linha no celular, 6 numa linha em tela larga */
+.abas { display: grid; grid-template-columns: repeat(3, 1fr); gap: .3rem; margin: 0 0 .7rem; }
+@media (min-width: 640px) { .abas { grid-template-columns: repeat(6, 1fr); } }
+.abas button { min-height: 40px; padding: .4rem .3rem; background: transparent; color: var(--verde); border: 1px solid var(--borda); font-size: .92rem; }
+.engrenagem { background: transparent; border: 1px solid #ffffff66; color: #fff; font-size: 1.3rem; min-height: 40px; width: 44px; padding: 0; }
 .abas button.ativa { background: var(--verde); color: #fff; border-color: var(--verde); }
 
 .placar { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; border-radius: var(--r); padding: .7rem; text-align: center; }

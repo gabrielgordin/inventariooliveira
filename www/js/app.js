@@ -181,7 +181,8 @@
     else if (S.view === 'novo') corpo = telaConfig(true);
     else if (S.view === 'projeto') corpo = telaProjeto();
     else if (S.view === 'parcela') corpo = telaParcela();
-    app.innerHTML = `<header>${voltar}<h1>${titulo}</h1><span id="chip-gps" class="chip">GPS…</span></header><main>${corpo}</main>`;
+    const ajustes = S.view === 'parcela' ? `<button class="engrenagem" data-a="ir-ajustes" aria-label="Ajustes do inventário" title="Ajustes do inventário (KML, estratos, parâmetros)">⚙</button>` : '';
+    app.innerHTML = `<header>${voltar}<h1>${titulo}</h1><span id="chip-gps" class="chip">GPS…</span>${ajustes}</header><main>${corpo}</main>`;
     chipGPS();
     if (S.view === 'parcela') { manterTela(true); focarEntrada(); } else manterTela(false);
     if (S.view === 'projeto' && S.aba === 'mapa') Mapa.montar();
@@ -270,7 +271,7 @@
 
   // ----- projeto -----
   function telaProjeto() {
-    const abas = [['parcelas', 'Parcelas'], ['resultados', 'Resultados'], ['pontos', 'Pontos'], ['mapa', 'Mapa'], ['exportar', 'Exportar'], ['config', 'Ajustes']];
+    const abas = [['parcelas', 'Parcelas'], ['resultados', 'Resultados'], ['pontos', 'Pontos'], ['mapa', 'Mapa'], ['exportar', 'Exportar'], ['config', '⚙ Ajustes']];
     const nav = `<nav class="abas">${abas.map(([k, v]) => `<button class="${S.aba === k ? 'ativa' : ''}" data-a="aba" data-k="${k}">${v}</button>`).join('')}</nav>`;
     let c = '';
     if (S.aba === 'parcelas') c = abaParcelas();
@@ -533,7 +534,10 @@
         await DB.salvar('projetos', p); S.aba = 'parcelas'; await abrirProjeto(p.id); break;
       }
       case 'abrir': S.aba = 'parcelas'; Mapa.vb = null; await abrirProjeto(el.dataset.id); break;
-      case 'aba': S.aba = el.dataset.k; render(); break;
+      case 'aba': S.aba = el.dataset.k; render(); window.scrollTo(0, 0); break;
+      case 'ir-ajustes':
+        await gravarCabecalho(); S.view = 'projeto'; S.aba = 'config'; S.editando = null; S.extras = [];
+        render(); window.scrollTo(0, 0); break;
       case 'salvar-config': {
         const c = lerConfig(proj); Object.assign(proj, c); await salvarProjeto(); toast('Configuração salva', 'ok'); render(); break;
       }
