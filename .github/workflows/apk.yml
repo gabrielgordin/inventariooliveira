@@ -38,7 +38,8 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
+      - name: Aceitar as licenças do Android SDK (já instalado no GitHub)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Instalar dependências e copiar o app para o projeto Android
         run: |
