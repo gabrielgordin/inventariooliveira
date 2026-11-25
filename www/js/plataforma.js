@@ -133,5 +133,21 @@
     return true;
   }
 
-  root.Plataforma = { nativo, iniciarGPS, aoMudarEstado, comExif, manterTela, salvarArquivo, salvarSilencioso, compartilhar, aoVoltar, tirarFoto, vibrar, paraBase64 };
+  // ---------- arquivo aberto com o app ("Abrir com…" no WhatsApp ou no gerenciador de arquivos) ----------
+  async function lerUri(url) {
+    try { const r = await fetch(Cap.convertFileSrc(url)); if (r.ok) return await r.text(); } catch (e) { /* tenta pelo Filesystem */ }
+    const r = await P.Filesystem.readFile({ path: url });
+    const bin = atob(r.data), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(u8);
+  }
+  function aoAbrirArquivo(fn) {
+    if (!nativo || !P.App) return;
+    const tratar = async url => { if (!url || !/^(content|file):/.test(url)) return; try { fn(await lerUri(url)); } catch (e) { fn(null, e); } };
+    try {
+      P.App.addListener('appUrlOpen', ev => tratar(ev.url));
+      P.App.getLaunchUrl().then(r => r && tratar(r.url)).catch(() => {});
+    } catch (e) { console.warn('abrir arquivo', e); }
+  }
+
+  root.Plataforma = { nativo, iniciarGPS, aoMudarEstado, comExif, manterTela, salvarArquivo, salvarSilencioso, compartilhar, aoVoltar, tirarFoto, vibrar, paraBase64, aoAbrirArquivo };
 })(window);

@@ -9,6 +9,12 @@
   const numIn = v => { if (v == null) return null; const s = String(v).trim().replace(',', '.'); if (s === '') return null; const n = +s; return isNaN(n) ? null : n; };
   const semAcento = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
   const chaveEsp = s => semAcento(s).replace(/[\s-]/g, '');
+  // iPhone/iPad: o sensor de movimento só liga depois de pedir permissão num toque (o Chrome novo também tem a função, mas não precisa dela)
+  const ehIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const pedirSensor = async () => {
+    if (!ehIOS || typeof DeviceOrientationEvent === 'undefined' || typeof DeviceOrientationEvent.requestPermission !== 'function') return true;
+    try { return (await Promise.race([DeviceOrientationEvent.requestPermission(), new Promise(r => setTimeout(() => r('tempo'), 15000))])) === 'granted'; } catch (e) { return false; }
+  };
   const agora = () => new Date().toLocaleString('sv-SE').slice(0, 19);
 
   const METODOS = {
@@ -29,6 +35,9 @@
 
   // ---------------- utilidades de domínio ----------------
   const imune = nome => { const n = semAcento(nome); return n ? (IMUNES.find(i => n.startsWith(i.chave)) || null) : null; };
+  // espécie ameaçada (Portaria GM/MMA 1.783/2026), pelo nome científico do cadastro
+  const ameaca = (nome, proj = S.projeto) => window.AMEACADAS ? AMEACADAS.buscar(cientifico(proj, nome)) : null;
+  const tagAmeaca = nome => { const a = ameaca(nome); return a && !a.genero ? ` <span class="tag ruim" title="${esc(a.catNome)} — Portaria GM/MMA 1.783/2026">ameaçada ${a.cat}</span>` : ''; };
   function cientifico(proj, nome) {
     const n = chaveEsp(nome); if (!n) return '';
     const l = (proj?.especies || []).find(e => chaveEsp(e[0]) === n && e[1]) || ESPECIES_BASE.find(e => chaveEsp(e[0]) === n);
@@ -265,7 +274,7 @@
   // ----- home -----
   function telaHome() {
     return `<section><div class="linha-botoes"><button data-a="novo">+ Novo inventário</button>
-      <label class="botao sec">Importar backup<input type="file" accept=".json,application/json" data-a="importar-backup" hidden></label></div>
+      <label class="botao sec">📥 Receber dados<input type="file" accept=".json,application/json" data-a="importar-backup" hidden></label></div>
       <div id="lista-projetos" class="lista"><p class="mudo">Carregando…</p></div>
       <details class="cartao"><summary>Equipe e aparelho</summary>
         <label>Nome de quem coleta neste aparelho<input id="equipe" value="${esc(S.equipe)}" placeholder="ex.: Gabriel"></label>
@@ -275,7 +284,7 @@
         <label class="check"><input type="checkbox" id="pref-tela" ${S.telaAcesa ? 'checked' : ''}> Manter a tela acesa durante o lançamento da parcela (desligar economiza bateria; na navegação a tela fica sempre acesa)</label>
         <label class="check"><input type="checkbox" id="pref-sol" ${S.sol ? 'checked' : ''}> Modo sol forte (alto contraste e letra maior) — também no botão ☀ do topo</label>
         <p class="mudo" id="armazenamento"></p></details>
-      <p class="mudo rodape">Os dados ficam só neste aparelho. Exporte o backup ao fim de cada dia de campo.</p></section>`;
+      <p class="mudo rodape">Os dados ficam só neste aparelho. Toque em 📤 para mandar o inventário a outro aparelho (ou guardar no Drive) ao fim de cada dia de campo. Quem recebe toca em 📥 Receber dados${Plataforma.nativo ? ', ou abre o arquivo com este app' : ''}.</p></section>`;
   }
   async function preencherHome() {
     const L = (await DB.todos('projetos')).sort((a, b) => (b.atualizado || 0) - (a.atualizado || 0));
@@ -289,6 +298,7 @@
         : `<span class="tag ruim">${env ? `backup enviado ${tempoAtras(env)} · há dados novos` : 'backup ainda não enviado'}</span>`;
       return `<div class="item-proj"><button class="item" data-a="abrir" data-id="${p.id}"><b>${esc(p.nome)}</b>
         <span class="mudo">${p.tipo === 'eucalipto' ? 'Reflorestamento' : 'Cerrado'} · ${n} parcela${n === 1 ? '' : 's'} · ${new Date(p.atualizado || p.criado).toLocaleDateString('pt-BR')}</span>${bk}</button>
+        <button class="btn-lista" data-a="enviar-da-lista" data-id="${p.id}" aria-label="Enviar ${esc(p.nome)}" title="Enviar para outro aparelho">📤</button>
         <button class="lixeira" data-a="apagar-da-lista" data-id="${p.id}" aria-label="Apagar ${esc(p.nome)}" title="Apagar inventário">🗑</button></div>`;
     }).join('') : '<p class="mudo">Nenhum inventário ainda. Toque em "Novo inventário".</p>';
     if (navigator.storage?.estimate) {
@@ -342,9 +352,21 @@
         <label class="botao sec">Importar KML<input type="file" accept=".kml,application/vnd.google-earth.kml+xml" data-a="importar-kml" hidden></label></div>
         ${!(pr.estratos || []).length ? `<label>Área total (ha), se não houver estratos<input id="c-area" inputmode="decimal" value="${esc(String(pr.areaHa ?? '').replace('.', ','))}"></label>` : ''}
       </fieldset>
+      ${novo ? '' : relatorioCampos(pr)}
       <button data-a="${novo ? 'criar' : 'salvar-config'}">${novo ? 'Criar inventário' : 'Salvar configuração'}</button>
       ${novo ? '' : `<button class="perigo" data-a="apagar-projeto">Apagar este inventário</button>`}
     </section>`;
+  }
+  // dados que só o relatório em Word usa
+  const CAMPOS_REL = [['propriedade', 'Imóvel (fazenda, sítio)'], ['municipio', 'Município / UF'], ['requerente', 'Requerente ou proprietário'], ['documento', 'CPF / CNPJ (opcional)'],
+    ['responsavel', 'Responsável técnico'], ['formacao', 'Formação (ex.: Engenheiro Florestal)'], ['registro', 'Registro no conselho (ex.: CREA-MG 00000/D)'], ['art', 'Nº da ART'],
+    ['local', 'Cidade da assinatura'], ['finalidade', 'Finalidade do inventário'], ['fonteEquacoes', 'Fonte das equações de volume (referência bibliográfica)']];
+  function relatorioCampos(pr) {
+    const R = pr.relatorio || {};
+    const ph = { finalidade: pr.tipo === 'eucalipto' ? 'estimar o volume de madeira do povoamento…' : 'subsidiar o pedido de autorização para supressão…', fonteEquacoes: 'deixe em branco para completar no Word' };
+    return `<details class="cartao"><summary>Dados do relatório (Word)</summary>
+      <p class="mudo">Vão para a identificação e a assinatura do relatório técnico. O que ficar em branco sai marcado em amarelo no Word, para completar.</p>
+      ${CAMPOS_REL.map(([k, t]) => `<label>${t}<input id="r-${k}" value="${esc(R[k] || '')}" placeholder="${esc(ph[k] || '')}"></label>`).join('')}</details>`;
   }
   function lerConfig(base) {
     const g = id => $('#' + id), n = id => numIn(g(id)?.value);
@@ -364,7 +386,9 @@
       const e = base.estratos[+inp.dataset.estr]; if (!e) return;
       if (inp.dataset.c === 'nome') e.nome = inp.value.trim(); else if (inp.dataset.c === 'fisionomia') e.fisionomia = inp.value; else e.areaHa = numIn(inp.value) ?? 0;
     });
-    return { nome: g('c-nome').value.trim(), params: P, areaHa: g('c-area') ? numIn(g('c-area').value) : base.areaHa };
+    const out = { nome: g('c-nome').value.trim(), params: P, areaHa: g('c-area') ? numIn(g('c-area').value) : base.areaHa };
+    if (g('r-propriedade')) { out.relatorio = { ...(base.relatorio || {}) }; CAMPOS_REL.forEach(([k]) => { out.relatorio[k] = g('r-' + k).value.trim(); }); }
+    return out;
   }
 
   // ----- projeto -----
@@ -443,38 +467,41 @@
     const ed = S.editando, edA = ed ? pc.arvores.find(a => a.id === ed) : null;
     const form = euc ? `<div class="entrada cartao" id="entrada">
         <div class="grade2"><label>CAP (cm)<input id="e-cap"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="next" value="${esc(edA?.CAP ?? '')}"></label>
-        <label>H (m)<input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="done" placeholder="opcional" value="${esc(edA?.H ?? '')}"></label></div>
+        <label><span class="rot-h">H (m)<button type="button" class="ico" data-a="hipsometro" title="Medir a altura com o celular">📐</button></span><input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="done" placeholder="opcional" value="${esc(edA?.H ?? '')}"></label></div>
         ${edA ? `<div class="linha-botoes"><button data-a="salvar-edicao">Salvar alteração</button><button class="sec" data-a="cancelar-edicao">Cancelar</button><button class="perigo" data-a="del-arvore">Excluir</button></div>${fotosArvoreHTML(edA)}`
-        : `<div class="linha-botoes tres acoes-form"><button data-a="add-euc" data-m="nova">Árvore</button><button class="sec" data-a="add-euc" data-m="fuste">+ Fuste</button><button class="sec" data-a="add-euc" data-m="falha">Falha</button></div>`}
+        : `<div class="linha-botoes tres acoes-form"><button data-a="add-euc" data-m="nova">Árvore</button><button class="sec" data-a="add-euc" data-m="fuste">+ Fuste</button><button class="sec" data-a="add-euc" data-m="falha">Falha</button></div>${extrasForm(pc)}`}
       </div>`
       : `<div class="entrada cartao" id="entrada">
         <label>Espécie (nome popular)<input id="e-nome" data-sug="sug-nome" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="next" value="${esc(edA?.nome ?? '')}"></label>
         <div class="sugestoes" id="sug-nome" hidden></div>
-        <div class="grade2"><label>H (m)<input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="next" value="${esc(edA?.H ?? '')}"></label>
+        <div class="grade2"><label><span class="rot-h">H (m)<button type="button" class="ico" data-a="hipsometro" title="Medir a altura com o celular">📐</button></span><input id="e-h"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="next" value="${esc(edA?.H ?? '')}"></label>
         <label>CAP (cm)<input id="e-cap"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} enterkeyhint="done" value="${esc(edA?.CAP ?? '')}"></label></div>
         <div id="extras">${S.extras.map((v, i) => `<label class="extra">CAP fuste ${i + 2}<input id="e-x${i}" data-extra="${i}"${usaTeclado() ? ' readonly inputmode="none" data-tecl' : ' inputmode="decimal"'} value="${esc(v ?? '')}"></label>`).join('')}</div>
         <div class="linha-botoes ${edA ? '' : 'acoes-form'}">${edA ? `<button data-a="salvar-edicao">Salvar alteração</button><button class="sec" data-a="cancelar-edicao">Cancelar</button><button class="perigo" data-a="del-arvore">Excluir</button>`
-        : `<button data-a="add-cerrado">Gravar árvore</button>`}<button class="sec" data-a="add-extra">+ Fuste</button></div>${edA ? fotosArvoreHTML(edA) : ''}</div>`;
+        : `<button data-a="add-cerrado">Gravar árvore</button>`}<button class="sec" data-a="add-extra">+ Fuste</button></div>${edA ? fotosArvoreHTML(edA) : extrasForm(pc)}</div>`;
 
     const lista = euc ? listaEuc(pc, r) : listaCerrado(pc, r, P);
     return `${cab}${vert}${resumo}${form}<div class="lista arvores">${lista}</div>
       <div class="linha-botoes fim"><button class="${pc.fechada ? 'sec' : ''}" data-a="fechar-parcela">${pc.fechada ? 'Reabrir parcela' : 'Fechar parcela'}</button>
       <button class="sec" data-a="excluir-calculo">${pc.excluir ? 'Voltar ao cálculo' : 'Tirar do cálculo'}</button>
-      <button class="perigo" data-a="apagar-parcela">Apagar parcela</button></div>${usaTeclado() ? tecladoHTML(euc, !!edA) : ''}`;
+      <button class="perigo" data-a="apagar-parcela">Apagar parcela</button></div>${usaTeclado() ? tecladoHTML(euc, !!edA, pc) : ''}`;
   }
+  // voz e desfazer (fora do teclado do app)
+  const extrasForm = pc => `<div class="linha-botoes acoes-form extras-form"><button class="sec" data-a="voz">🎤 Falar</button>${pc.arvores.length ? `<button class="sec" data-a="desfazer">↶ Desfazer último</button>` : ''}</div>`;
   // ----- teclado numérico do app -----
   const usaTeclado = () => S.teclado && !S.tecladoPausa && S.view === 'parcela';
-  function tecladoHTML(euc, edit) {
+  function tecladoHTML(euc, edit, pc) {
     const k = (t, v, cls = '') => `<button class="tk ${cls}" data-tk="${v}">${t}</button>`;
     const acoes = edit ? `<button data-a="salvar-edicao" class="tk-acao">Salvar alteração</button><button data-a="cancelar-edicao" class="tk-acao sec">Cancelar</button>`
       : euc ? `<button data-a="add-euc" data-m="nova" class="tk-acao">Árvore</button><button data-a="add-euc" data-m="fuste" class="tk-acao sec">+ Fuste</button><button data-a="add-euc" data-m="falha" class="tk-acao sec">Falha</button>`
         : `<button data-a="add-cerrado" class="tk-acao">Gravar árvore</button><button data-a="add-extra" class="tk-acao sec">+ Fuste</button>`;
+    const extra = edit ? '' : `<button data-a="voz" class="tk-acao sec tk-ico" title="Lançar falando">🎤</button>${pc?.arvores.length ? `<button data-a="desfazer" class="tk-acao sec tk-ico" title="Desfazer o último lançamento">↶</button>` : ''}`;
     return `<div class="teclado" id="teclado"><div class="tk-grade">
       ${k('7', '7')}${k('8', '8')}${k('9', '9')}${k('⌫', 'del', 'fn')}
       ${k('4', '4')}${k('5', '5')}${k('6', '6')}${k(',', ',', 'fn')}
       ${k('1', '1')}${k('2', '2')}${k('3', '3')}${k('Próx. ›', 'prox', 'fn')}
       ${k('0', '0', 'zero')}${k('Limpar', 'limpar', 'fn')}${k('⌨', 'android', 'fn')}
-      </div><div class="tk-acoes">${acoes}</div></div>`;
+      </div><div class="tk-acoes">${acoes}${extra}</div></div>`;
   }
   function camposOrdem() {
     const ex = [...document.querySelectorAll('[data-extra]')].map(i => i.id);
@@ -512,7 +539,7 @@
     return [...pc.arvores].map((a, i) => ({ a, i })).reverse().map(({ a, i }) => {
       const c = r.arvores[i].c, al = Calc.alertasArvore(a, pc.arvores[i - 1], P, 'cerrado'), im = imune(a.nome);
       return `<button class="item arv ${c.incluida ? '' : 'excluida'} ${S.editando === a.id ? 'sel' : ''}" data-a="editar" data-id="${a.id}">
-        <span class="n">${i + 1}</span><span><b>${esc(a.nome || '(sem nome)')}</b>${im ? ' <span class="tag ruim">imune</span>' : ''}${iconeFoto(a.id)}${alertasHTML(al.filter(x => x.nivel !== 'info'))}</span>
+        <span class="n">${i + 1}</span><span><b>${esc(a.nome || '(sem nome)')}</b>${im ? ' <span class="tag ruim">imune</span>' : ''}${tagAmeaca(a.nome)}${iconeFoto(a.id)}${alertasHTML(al.filter(x => x.nivel !== 'info'))}</span>
         <span class="num">H ${fmt(a.H, 1)} · CAP ${fmt(a.CAP, 0)}${(a.fustesExtras || []).length ? ` +${a.fustesExtras.length}` : ''}</span></button>`;
     }).join('');
   }
@@ -566,7 +593,7 @@
     const prc = R.porParcela.map(x => `<tr><td>${esc(x.pc.numero)}</td><td>${esc(x.pc.estrato || '')}</td><td>${euc ? x.r.nFustes : x.r.nIncluidas}</td><td>${fmt(x.r.ha.g, 2)}</td><td>${fmt(R.vha(x), 1)}</td></tr>`).join('');
     h += `<div class="cartao"><h3>Parcelas</h3><table class="tab"><tr><th>Nº</th><th>Estrato</th><th>${euc ? 'Fustes' : 'Árv.'}</th><th>G m²/ha</th><th>m³/ha</th></tr>${prc}</table></div>`;
     if (R.fito) h += `<div class="cartao"><h3>Fitossociologia</h3><div class="rolagem"><table class="tab"><tr><th>Espécie</th><th>N</th><th>DA</th><th>DR%</th><th>FR%</th><th>DoR%</th><th>VI%</th><th>m³</th></tr>
-      ${R.fito.map(s => `<tr><td>${esc(s.nome)}${imune(s.nome) ? ' <span class="tag ruim">imune</span>' : ''}</td><td>${s.N}</td><td>${fmt(s.DA, 0)}</td><td>${fmt(s.DR, 1)}</td><td>${fmt(s.FR, 1)}</td><td>${fmt(s.DoR, 1)}</td><td>${fmt(s.VI, 1)}</td><td>${fmt(s.V, 3)}</td></tr>`).join('')}</table></div></div>`;
+      ${R.fito.map(s => `<tr><td>${esc(s.nome)}${imune(s.nome) ? ' <span class="tag ruim">imune</span>' : ''}${tagAmeaca(s.nome)}</td><td>${s.N}</td><td>${fmt(s.DA, 0)}</td><td>${fmt(s.DR, 1)}</td><td>${fmt(s.FR, 1)}</td><td>${fmt(s.DoR, 1)}</td><td>${fmt(s.VI, 1)}</td><td>${fmt(s.V, 3)}</td></tr>`).join('')}</table></div></div>`;
     if (R.classes?.length) h += `<div class="cartao"><h3>Classes de DAP</h3><table class="tab"><tr><th>DAP (cm)</th><th>Nº</th><th>% nº</th><th>% volume</th></tr>
       ${R.classes.map(c => `<tr><td>${c.min}–${c.max}</td><td>${c.n}</td><td>${fmt(c.pn, 1)}</td><td>${fmt(c.pv, 1)}</td></tr>`).join('')}</table></div>`;
     return h;
@@ -590,7 +617,15 @@
 
   // ----- exportar -----
   function abaExportar() {
-    return `<div class="cartao"><h3>Resultados</h3>
+    const nat = S.projeto.tipo !== 'eucalipto';
+    return `<div class="cartao"><h3>Relatório técnico</h3>
+      <button class="largo" data-a="exp" data-f="docx">Relatório em Word (.docx)</button>
+      <p class="mudo">Identificação, metodologia, equações, estatística${nat ? ', fitossociologia, volume por espécie, espécies imunes e ameaçadas' : ''}, mapa, fotos com legenda e coordenadas, dados de campo e vértices. Preencha antes os "Dados do relatório" em ⚙ Ajustes; o que faltar sai marcado em amarelo.</p></div>
+      <div class="cartao"><h3>SINAFLOR</h3>
+      <button class="largo sec" data-a="exp" data-f="sinaflor">Campos do SINAFLOR (.xlsx)</button>
+      <button class="largo sec" data-a="exp" data-f="shp">Localização das amostras: shapefile (.zip)</button>
+      <p class="mudo">O SINAFLOR não importa as árvores: a planilha traz cada campo da aba "Inventário Florestal" já calculado (informações gerais, volume por espécie, resultado do inventário) para copiar, e serve de anexo. O shapefile (SIRGAS 2000) leva os centros e os contornos das parcelas.</p></div>
+      <div class="cartao"><h3>Resultados</h3>
       <button class="largo" data-a="exp" data-f="xlsx">Planilha completa (.xlsx)</button>
       <p class="mudo">Dados, parcelas, estatística, ${S.projeto.tipo === 'cerrado' ? 'fitossociologia, ' : ''}vértices e pontos, com as coordenadas em UTM.</p>
       <button class="largo sec" data-a="exp" data-f="csv">Dados de campo (.csv)</button>
@@ -602,8 +637,9 @@
       <div class="cartao"><h3>Backup e outro aparelho</h3>
       ${Plataforma.nativo ? `<p class="mudo">Backup automático: ${S.projeto.ultimoAutoBackup ? `último ${tempoAtras(S.projeto.ultimoAutoBackup)}` : 'ainda nenhum'}, em Documentos/Inventario/backup-automatico. Ele é gravado ao fechar cada parcela e ao sair dela. Fica só no aparelho: mande o backup para fora daqui de vez em quando.</p>` : ''}
       <p class="mudo">Último backup enviado: ${S.projeto.ultimoBackupEnviado ? tempoAtras(S.projeto.ultimoBackupEnviado) : 'nenhum'}.${Plataforma.nativo ? '' : ' Nesta versão o backup não é gravado sozinho: exporte ao fim de cada parcela ou de cada dia (no iPhone, escolha "Salvar em Arquivos" ou mande pelo WhatsApp).'}</p>
-      <button class="largo" data-a="exp" data-f="backup">Exportar backup (.json)</button>
-      <p class="mudo">Importe o backup de outro aparelho na tela inicial: as parcelas se juntam às deste. Quando a mesma parcela existe nos dois, fica a versão alterada por último.</p></div>`;
+      <button class="largo" data-a="enviar">📤 Enviar para outro aparelho</button>
+      <button class="largo sec" data-a="exp" data-f="backup">Salvar o backup (.json)</button>
+      <p class="mudo">No outro aparelho, toque em 📥 Receber dados na tela inicial${Plataforma.nativo ? ' (ou abra o arquivo recebido com este app)' : ''}. Antes de juntar, o app mostra o que vai entrar. Quando a mesma parcela existe nos dois, fica a versão alterada por último.</p></div>`;
   }
 
   // ---------------- mapa (SVG, sem internet) ----------------
@@ -731,6 +767,8 @@
       case 'apagar-da-lista':
         if (await apagarInventario(el.dataset.id)) preencherHome();
         break;
+      case 'enviar-da-lista': await enviarInventario(el.dataset.id); preencherHome(); break;
+      case 'enviar': await enviarInventario(proj.id); render(); break;
       case 'salvar-equipe': S.equipe = $('#equipe').value.trim(); await DB.config('equipe', S.equipe); toast('Salvo', 'ok'); break;
       case 'nova-parcela': {
         const nums = S.parcelas.map(p => parseInt(p.numero) || 0), prox = (nums.length ? Math.max(...nums) : 0) + 1;
@@ -772,6 +810,21 @@
         if (al.length) toast(al.map(x => '⚠ ' + esc(x.msg)).join('<br>'), 'aviso');
         S.focar = true; S.campo = null; render(); break;
       }
+      case 'desfazer': {
+        if (!pc.arvores.length) return toast('Nada para desfazer', 'aviso');
+        const a = pc.arvores[pc.arvores.length - 1], euc = proj.tipo === 'eucalipto';
+        const nf = S.fotos.filter(f => f.arvoreId === a.id).length;
+        const nFuste = euc ? pc.arvores.filter(x => x.arvore === a.arvore && !x.falha).length : 0;
+        const desc = euc ? (a.falha ? `Falha (árvore ${a.arvore})` : `Árvore ${a.arvore}${nFuste > 1 ? `, fuste ${nFuste}` : ''} — CAP ${fmt(a.CAP, 1)}${a.H != null ? ` · H ${fmt(a.H, 1)}` : ''}`)
+          : `${esc(a.nome)} — H ${fmt(a.H, 1)} · CAP ${fmt(a.CAP, 1)}${(a.fustesExtras || []).length ? ` + ${a.fustesExtras.length} fuste(s)` : ''}`;
+        if (!(await simNao('Desfazer o último lançamento?', `<p><b>${desc}</b></p><p class="mudo">Os valores voltam para os campos, para corrigir e gravar de novo.${nf ? ` A(s) ${nf} foto(s) desta árvore serão apagadas.` : ''}</p>`, { sim: 'DESFAZER', nao: 'NÃO', perigo: false }))) return;
+        pc.arvores.pop(); await apagarFotos(f => f.arvoreId === a.id); await salvarParcela(pc);
+        S.editando = null; S.extras = euc ? [] : [...(a.fustesExtras || [])]; S.campo = null; render();
+        if ($('#e-cap')) $('#e-cap').value = a.CAP != null ? vIn(a.CAP) : '';
+        if ($('#e-h')) $('#e-h').value = a.H != null ? vIn(a.H) : '';
+        if ($('#e-nome')) $('#e-nome').value = a.nome || '';
+        toast('Último lançamento desfeito', 'ok'); break;
+      }
       case 'add-extra': {
         S.extras = lerExtras(); S.extras.push(null); guardarRascunho(); render(); restaurarRascunho();
         const id = `e-x${S.extras.length - 1}`; if (usaTeclado()) marcarCampo(id); else $('#' + id)?.focus(); break;
@@ -784,8 +837,7 @@
         pc.arvores.push(reg); S.extras = []; aprenderEspecie(reg.nome); await salvarParcela(pc);
         if (al.length) toast(al.map(x => (x.nivel === 'info' ? 'ℹ ' : '⚠ ') + esc(x.msg)).join('<br>'), 'aviso');
         S.focar = true; S.campo = null; render();
-        const im = imune(reg.nome);
-        if (im && confirm(`${im.motivo}.\n\nMarcar agora o ponto GPS desta árvore?`)) await marcarPontoImune(reg, pc, im);
+        await avisoEspecial(reg, pc);
         break;
       }
       case 'editar': {
@@ -827,8 +879,7 @@
         const nome = $('#pt-nome').value.trim(), tipo = $('#pt-tipo').value, obs = $('#pt-obs').value.trim();
         const v = await GPS.capturar(proj.params.segundosGPS ?? 10, `Ponto: ${nome || tipo}`); if (!v) return;
         if (!proj.zonaUTM) { proj.zonaUTM = Geo.zonaDe(v.lon); await salvarProjeto(); }
-        const im = tipo === 'arvore' ? imune(nome) : null;
-        await salvarPonto({ id: uid(), projetoId: proj.id, tipo, especie: tipo === 'arvore' ? nome : '', nome: tipo !== 'arvore' ? nome : '', obs, situacao: im ? 'Imune de corte (Lei MG 20.308/2012)' : '', ...v });
+        await salvarPonto({ id: uid(), projetoId: proj.id, tipo, especie: tipo === 'arvore' ? nome : '', nome: tipo !== 'arvore' ? nome : '', obs, situacao: tipo === 'arvore' ? situacaoEspecie(nome) : '', ...v });
         if (tipo === 'arvore') aprenderEspecie(nome);
         toast('Ponto marcado', 'ok'); render(); break;
       }
@@ -849,6 +900,8 @@
         break;
       }
       case 'ver-foto': verFoto(el.dataset.id); break;
+      case 'voz': await lancarPorVoz(pc); break;
+      case 'hipsometro': await Hipso.abrir(); break;
       case 'planejar': await planejarParcelas(); break;
       case 'navegar': {
         const alvo = el.dataset.id || proximoPlanejado()?.id;
@@ -858,7 +911,7 @@
       case 'nav-proxima': { const p = proximoPlanejado(S.alvoId); if (p) { S.alvoId = p.id; render(); } else toast('Não há outra parcela a fazer', 'aviso'); break; }
       case 'nav-abrir': await abrirParcelaPlanejada(); break;
       case 'bussola-ios': {
-        try { const r = await DeviceOrientationEvent.requestPermission(); Bussola.permitido = r === 'granted'; } catch (e) { Bussola.permitido = false; }
+        Bussola.permitido = await pedirSensor();
         if (!Bussola.permitido) toast('Sem permissão da bússola: a seta vai mostrar o rumo a partir do Norte.', 'aviso');
         Bussola.desligar(); render(); break;
       }
@@ -889,6 +942,92 @@
   const tempoAtras = t => {
     const m = Math.round((Date.now() - t) / 60000);
     return m < 2 ? 'agora há pouco' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : `há ${Math.round(m / 1440)} dia(s)`;
+  };
+
+  // ----- lançamento por voz -----
+  async function lancarPorVoz(pc) {
+    const euc = S.projeto.tipo === 'eucalipto';
+    if (!Voz.disponivel()) return toast('Lançamento por voz indisponível neste aparelho ou navegador.', 'aviso');
+    let alts;
+    try { alts = await Voz.ouvir(euc ? 'Fale: CAP 45, altura 18 (ou "falha")' : 'Fale: espécie, altura, CAP'); }
+    catch (e) { return toast('Voz: ' + esc(e.message), 'erro'); }
+    if (!alts || !alts.length) return;
+    const r = Voz.melhor(alts, S.projeto.tipo, listaEspecies());
+    if (euc && r.falha) {
+      if (await simNao('Lançar falha?', `<p>Ouvi: “${esc(alts[0])}”</p>`, { sim: 'LANÇAR FALHA', nao: 'NÃO', perigo: false })) await acao('add-euc', { dataset: { m: 'falha' } });
+      return;
+    }
+    if (!euc && r.nome && $('#e-nome')) $('#e-nome').value = r.nome;
+    if (r.H != null && $('#e-h')) $('#e-h').value = vIn(r.H);
+    if (r.CAP != null && $('#e-cap')) $('#e-cap').value = vIn(r.CAP);
+    if (!euc && r.extras.length) { guardarRascunho(); S.extras = [...r.extras]; render(); restaurarRascunho(); }
+    const faltou = (euc ? [r.CAP == null && 'CAP'] : [!r.nome && 'espécie', r.CAP == null && 'CAP']).filter(Boolean).join(' e ');
+    if (r.gravar && !faltou) { await acao(euc ? 'add-euc' : 'add-cerrado', { dataset: { m: r.fuste ? 'fuste' : 'nova' } }); return; }
+    const partes = [!euc && r.nome ? `<b>${esc(r.nome)}</b>` : '', r.H != null ? `H ${fmt(r.H, 1)}` : '', r.CAP != null ? `CAP ${fmt(r.CAP, 1)}` : '', r.extras.length ? `fustes ${r.extras.map(x => fmt(x, 0)).join(' + ')}` : ''].filter(Boolean).join(' · ');
+    toast(`🎤 “${esc(alts[0])}”<br>${partes || 'Não entendi os valores.'}${faltou ? `<br>Faltou: ${faltou}` : ''}${!euc && r.nome && !r.exato ? '<br>Nome aproximado: confira.' : ''}${euc && r.fuste ? '<br>Toque em + Fuste para gravar.' : '<br>Confira e grave.'}`, faltou || (!euc && r.nome && !r.exato) ? 'aviso' : 'ok');
+  }
+
+  // ----- hipsômetro: o celular mede o ângulo da base e do topo; H = d · (tan α topo − tan α base) -----
+  const Hipso = {
+    leit: [], m: null, stream: null, base: null, topo: null,
+    // ângulo do eixo da câmera de trás acima do horizonte (graus), pelos ângulos beta e gama do aparelho
+    angulo(e) { if (e.beta == null) return null; const r = Math.PI / 180; return Math.asin(Math.max(-1, Math.min(1, -Math.cos(e.beta * r) * Math.cos((e.gamma || 0) * r)))) / r; },
+    ev(e) {
+      const a = Hipso.angulo(e); if (a == null) return;
+      Hipso.leit.push({ a, t: Date.now() }); if (Hipso.leit.length > 60) Hipso.leit.shift();
+      const el = $('#hp-ang'); if (el) el.textContent = `${fmt(Hipso.media(300), 1)}°`;
+    },
+    // média das leituras do último meio segundo que estão perto da última (descarta o movimento de mirar)
+    media(ms = 500) {
+      const t = Date.now(), u = this.leit[this.leit.length - 1]; if (!u || t - u.t > 2000) return null;
+      const L = this.leit.filter(x => t - x.t <= ms && Math.abs(x.a - u.a) <= 1.5);
+      return L.length ? L.reduce((s, x) => s + x.a, 0) / L.length : u.a;
+    },
+    async abrir() {
+      if (!(await pedirSensor())) return toast('Sem permissão do sensor de movimento.', 'erro');
+      this.leit = []; this.base = null; this.topo = null;
+      const d0 = S.projeto.params.distHipso || 15;
+      const m = this.m = modal(`<div class="hipso"><div class="hipso-video"><video id="hp-video" playsinline muted autoplay></video><div class="mira"></div><div class="hipso-ang" id="hp-ang">—</div></div>
+        <label>Distância horizontal até a árvore (m)<input id="hp-d" inputmode="decimal" value="${vIn(d0)}"></label>
+        <div class="hipso-leit"><span>Base <b id="hp-b">—</b></span><span>Topo <b id="hp-t">—</b></span><span>Altura <b id="hp-h">—</b></span></div>
+        <p class="mudo" id="hp-dica">Mire a <b>base</b> do tronco com a cruz e toque em Base. Depois mire o <b>topo</b> e toque em Topo.</p>
+        <div class="botoes"><button data-m="base">Base</button><button data-m="topo">Topo</button></div>
+        <div class="botoes"><button class="sec" data-m="cancelar">Cancelar</button><button data-m="usar" id="hp-usar" disabled>Usar a altura</button></div></div>`);
+      m.classList.add('hipso-fundo');
+      window.addEventListener('deviceorientation', this.ev);
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        const v = $('#hp-video', m); if (v) v.srcObject = this.stream; else this.parar();
+      } catch (e) { const b = $('.hipso-video', m); if (b) b.classList.add('sem-camera'); $('#hp-dica', m).innerHTML = 'Câmera indisponível: aponte a traseira do celular para o alvo, como para fotografar. ' + $('#hp-dica', m).innerHTML; }
+      setTimeout(() => { if (this.m === m && !this.leit.length) $('#hp-ang', m).textContent = 'sem sensor'; }, 1500);
+      return new Promise(res => m.addEventListener('click', async e => {
+        const a = e.target.closest('[data-m]')?.dataset.m; if (!a) return;
+        if (a === 'base' || a === 'topo') {
+          const v = this.media(); if (v == null) return toast('O sensor de inclinação não respondeu.', 'erro');
+          this[a] = v; Plataforma.vibrar();
+          $(`#hp-${a[0]}`, m).textContent = `${fmt(v, 1)}°`;
+          const H = this.altura(numIn($('#hp-d', m).value));
+          $('#hp-h', m).textContent = H != null ? `${fmt(H, 1)} m` : '—';
+          $('#hp-usar', m).disabled = !(H > 0);
+          if (a === 'base' && this.topo == null) $('#hp-dica', m).innerHTML = 'Agora mire o <b>topo</b> da copa e toque em Topo.';
+          else if (a === 'topo' && this.base == null) $('#hp-dica', m).innerHTML = 'Agora mire a <b>base</b> do tronco e toque em Base.';
+          else if (H > 0) $('#hp-dica', m).innerHTML = 'Confira e toque em <b>Usar a altura</b>. Para refazer, mire de novo e toque em Base ou Topo.';
+          if (H != null && H <= 0) $('#hp-dica', m).textContent = 'O topo ficou abaixo da base: refaça as miradas.';
+          return;
+        }
+        const d = numIn($('#hp-d', m).value), H = this.altura(d);
+        this.fechar();
+        if (a === 'usar' && H > 0) {
+          if (d !== S.projeto.params.distHipso) { S.projeto.params.distHipso = d; salvarProjeto(); }
+          const el = $('#e-h'); if (el) { el.value = vIn(Math.round(H * 10) / 10); if (usaTeclado()) marcarCampo('e-cap'); }
+          toast(`Altura ${fmt(H, 1)} m (distância ${fmt(d, 1)} m)`, 'ok');
+        }
+        res(a === 'usar' ? H : null);
+      }));
+    },
+    altura(d) { if (this.base == null || this.topo == null || !(d > 0)) return null; const r = Math.PI / 180; return d * (Math.tan(this.topo * r) - Math.tan(this.base * r)); },
+    parar() { if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; } },
+    fechar() { window.removeEventListener('deviceorientation', this.ev); this.parar(); if (this.m) { this.m.remove(); this.m = null; } }
   };
 
   // ----- fotos -----
@@ -1051,7 +1190,7 @@
     rumo() { return Date.now() - this.t < 2000 ? this.valor : null; },
     permitido: false,
     // iPhone (iOS 13+): a bússola só liga depois de pedir permissão num toque
-    precisaPermissao() { return typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function' && !this.permitido; }
+    precisaPermissao() { return ehIOS && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function' && !this.permitido; }
   };
 
   async function definirSol(on) {
@@ -1101,9 +1240,24 @@
     if (ESPECIES_BASE.some(e => chaveEsp(e[0]) === n) || (S.projeto.especies || []).some(e => chaveEsp(e[0]) === n)) return;
     (S.projeto.especies = S.projeto.especies || []).push([nome, '']); salvarProjeto();
   }
-  async function marcarPontoImune(reg, pc, im) {
+  // situação legal da espécie: imune de corte (MG) e/ou ameaçada (lista nacional)
+  function situacaoEspecie(nome) {
+    const im = imune(nome), am = ameaca(nome), L = [];
+    if (im) L.push('Imune de corte (Lei MG 20.308/2012)');
+    if (am && !am.genero) L.push(`Ameaçada ${am.cat} (Portaria GM/MMA 1.783/2026)`);
+    return L.join(' · ');
+  }
+  // depois de gravar uma árvore de espécie imune ou ameaçada: avisa e oferece marcar o ponto GPS
+  async function avisoEspecial(reg, pc) {
+    const im = imune(reg.nome), am = ameaca(reg.nome);
+    if (am?.genero && !im) { toast(`ℹ ${esc(am.nome)}: o gênero tem espécies ameaçadas. Se der, identifique a espécie.`, 'aviso'); return; }
+    if (!im && !am) return;
+    const txt = [im ? esc(im.motivo) : '', am && !am.genero ? `<b>${esc(am.especie)}</b> está na lista nacional de espécies ameaçadas: <b>${esc(am.catNome)} (${am.cat})</b> — Portaria GM/MMA nº 1.783/2026.` : ''].filter(Boolean).join('<br><br>');
+    if (await simNao('Espécie protegida', `<p>${txt}</p><p>Marcar agora o ponto GPS desta árvore?</p>`, { sim: 'MARCAR PONTO', nao: 'AGORA NÃO', perigo: false })) await marcarPontoImune(reg, pc);
+  }
+  async function marcarPontoImune(reg, pc) {
     const v = await GPS.capturar(S.projeto.params.segundosGPS ?? 10, `${reg.nome} (parcela ${pc.numero})`); if (!v) return;
-    await salvarPonto({ id: uid(), projetoId: S.projeto.id, tipo: 'arvore', especie: reg.nome, situacao: 'Imune de corte (Lei MG 20.308/2012) — dentro da parcela', parcela: pc.numero, arvoreId: reg.id, obs: `CAP ${reg.CAP} · H ${reg.H ?? '—'}`, ...v });
+    await salvarPonto({ id: uid(), projetoId: S.projeto.id, tipo: 'arvore', especie: reg.nome, situacao: `${situacaoEspecie(reg.nome)} — dentro da parcela`, parcela: pc.numero, arvoreId: reg.id, obs: `CAP ${reg.CAP} · H ${reg.H ?? '—'}`, ...v });
     toast('Ponto da árvore marcado', 'ok');
     if (await simNao('Foto da árvore?', `<p>Tirar agora uma foto de ${esc(reg.nome)}? Ela fica ligada à árvore e ao ponto.</p>`, { sim: 'TIRAR FOTO', nao: 'AGORA NÃO', perigo: false })) {
       const pt = S.pontos[S.pontos.length - 1];
@@ -1129,6 +1283,12 @@
     try {
       let blob, nome;
       if (f === 'fotos') { await exportarFotos(); return; }
+      if (f === 'docx') {
+        if (!R.porParcela.length) return toast('Lance parcelas antes de gerar o relatório', 'aviso');
+        toast('Montando o relatório…'); blob = await Relatorio.gerar(proj, [...S.parcelas].sort(ordNum), S.pontos, S.fotos, R); nome = Exportar.nomeArquivo(proj, 'relatorio', 'docx');
+      }
+      if (f === 'sinaflor') { if (R.est.n < 2) return toast('São precisas pelo menos 2 parcelas', 'aviso'); blob = Sinaflor.planilha(proj, R); nome = Exportar.nomeArquivo(proj, 'sinaflor', 'xlsx'); }
+      if (f === 'shp') { blob = Sinaflor.shapefile(proj, R); nome = Exportar.nomeArquivo(proj, 'sinaflor_shapefile', 'zip'); }
       if (f === 'xlsx') { blob = Exportar.planilhaXLSX(proj, S.parcelas, S.pontos, R, S.fotos); nome = Exportar.nomeArquivo(proj, 'inventario', 'xlsx'); }
       if (f === 'csv') { blob = Exportar.csv(proj, [...S.parcelas].sort(ordNum)); nome = Exportar.nomeArquivo(proj, 'dados', 'csv'); }
       if (f === 'kml') { blob = Exportar.kml(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'kml'); }
@@ -1169,10 +1329,49 @@
       for (const p of w) await salvarPonto({ id: uid(), projetoId: S.projeto.id, tipo: comoPlan ? 'planejado' : 'outro', nome: p.nome, obs: p.desc, lat: p.lat, lon: p.lon, acc: null, hora: p.hora ? p.hora.replace('T', ' ').slice(0, 19) : '' });
       toast(`${w.length} pontos importados`, 'ok'); render();
     }
-    if (tipo === 'importar-backup') {
-      let d; try { d = JSON.parse(txt); } catch { return toast('Arquivo inválido', 'erro'); }
-      if (d.formato !== 'inventario-florestal') return toast('Não é um backup deste app', 'erro');
-      const ex = await DB.pegar('projetos', d.projeto.id);
+    if (tipo === 'importar-backup') await receberDados(txt);
+  }
+  // ----- enviar e receber entre aparelhos -----
+  async function enviarInventario(id) {
+    const proj = S.projeto?.id === id ? S.projeto : await DB.pegar('projetos', id); if (!proj) return;
+    const parc = S.projeto?.id === id ? S.parcelas : await DB.porProjeto('parcelas', id);
+    const pts = S.projeto?.id === id ? S.pontos : await DB.porProjeto('pontos', id);
+    const fts = S.projeto?.id === id ? S.fotos : await DB.porProjeto('fotos', id);
+    try { await Exportar.enviar(Exportar.backup(proj, parc, pts, fts), Exportar.nomeArquivo(proj, 'backup', 'json')); }
+    catch (e) { return toast('Não deu para enviar: ' + esc(e.message), 'erro'); }
+    proj.ultimoBackupEnviado = Date.now(); await DB.salvarCru('projetos', proj);
+  }
+  // compara o arquivo recebido com o que há no aparelho, sem gravar nada
+  async function previaRecebido(d) {
+    const ex = await DB.pegar('projetos', d.projeto.id);
+    const comparar = async (store, L) => {
+      const loc = ex ? await DB.porProjeto(store, ex.id) : [], m = new Map(loc.map(x => [x.id, x]));
+      const o = { novos: [], atual: [], iguais: [], antigos: [], loc };
+      (L || []).forEach(r => { const e = m.get(r.id); if (!e) o.novos.push(r); else if ((r.atualizado || 0) > (e.atualizado || 0)) o.atual.push(r); else if ((r.atualizado || 0) === (e.atualizado || 0)) o.iguais.push(r); else o.antigos.push(r); });
+      return o;
+    };
+    const pc = await comparar('parcelas', d.parcelas), pt = await comparar('pontos', d.pontos), ft = await comparar('fotos', d.fotos);
+    const fim = new Map(pc.loc.map(p => [p.id, p])); [...pc.novos, ...pc.atual].forEach(p => fim.set(p.id, p));
+    const nums = {}; [...fim.values()].forEach(p => { nums[p.numero] = (nums[p.numero] || 0) + 1; });
+    return { ex, pc, pt, ft, dup: Object.keys(nums).filter(n => nums[n] > 1).sort() };
+  }
+  async function receberDados(txt) {
+    let d; try { d = JSON.parse(txt); } catch { return toast('Arquivo inválido', 'erro'); }
+    if (d.formato !== 'inventario-florestal') return toast('Não é um arquivo deste app', 'erro');
+    const v = await previaRecebido(d);
+    const listaNum = L => L.map(p => p.numero).sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0)).join(', ');
+    const lin = (n, txt2, L) => n ? `<li><b>${n}</b> ${txt2}${L ? ` <span class="mudo">(nº ${esc(listaNum(L))})</span>` : ''}</li>` : '';
+    const nada = !v.pc.novos.length && !v.pc.atual.length && !v.pt.novos.length && !v.pt.atual.length && !v.ft.novos.length && !v.ft.atual.length;
+    const html = `<p><b>${esc(d.projeto.nome)}</b> — ${v.ex ? 'já existe neste aparelho: os dados se juntam' : 'inventário novo neste aparelho'}.</p>
+      ${d.enviadoPor || d.exportado ? `<p class="mudo">${d.enviadoPor ? `Enviado por ${esc(d.enviadoPor)}` : 'Gerado'}${d.exportado ? ` em ${new Date(d.exportado).toLocaleString('pt-BR').slice(0, 17)}` : ''}.</p>` : ''}
+      <ul class="previa">${lin(v.pc.novos.length, 'parcela(s) nova(s)', v.pc.novos)}${lin(v.pc.atual.length, 'parcela(s) atualizada(s) — a recebida é mais nova', v.pc.atual)}
+      ${lin(v.pc.antigos.length, 'parcela(s) mais antiga(s) que as daqui — ficam as daqui', v.pc.antigos)}${lin(v.pc.iguais.length, 'parcela(s) iguais às daqui')}
+      ${lin(v.pt.novos.length + v.pt.atual.length, 'ponto(s) novo(s) ou atualizado(s)')}${lin(v.ft.novos.length + v.ft.atual.length, 'foto(s) nova(s) ou atualizada(s)')}</ul>
+      ${v.dup.length ? `<p class="aviso">⚠ Depois de juntar ficarão números de parcela repetidos: ${esc(v.dup.join(', '))}. Renumere uma delas depois.</p>` : ''}
+      ${nada ? '<p class="mudo">Nada novo: este aparelho já tem tudo o que veio no arquivo.</p>' : ''}`;
+    if (!(await simNao(v.ex ? 'Juntar os dados recebidos?' : 'Receber o inventário?', html, { sim: v.ex ? 'JUNTAR' : 'RECEBER', nao: 'CANCELAR', perigo: false }))) return;
+    if (nada && v.ex) return;
+    const ex = v.ex;
       let novas = 0, atual = 0, mantidas = 0;
       if (!ex || (d.projeto.atualizado || 0) > (ex.atualizado || 0)) await DB.salvarCru('projetos', ex ? { ...d.projeto, especies: mesclarEsp(ex.especies, d.projeto.especies) } : d.projeto);
       for (const [store, L] of [['parcelas', d.parcelas], ['pontos', d.pontos], ['fotos', d.fotos || []]]) for (const r of L) {
@@ -1181,9 +1380,8 @@
       }
       const todas = await DB.porProjeto('parcelas', d.projeto.id), nums = {}; todas.forEach(p => { nums[p.numero] = (nums[p.numero] || 0) + 1; });
       const dup = Object.keys(nums).filter(n => nums[n] > 1);
-      toast(`${ex ? 'Juntado' : 'Importado'}: ${novas} novos, ${atual} atualizados, ${mantidas} já em dia.${dup.length ? `<br>⚠ Números repetidos: ${dup.join(', ')} — renumere uma delas.` : ''}`, dup.length ? 'aviso' : 'ok');
-      preencherHome();
-    }
+      toast(`${ex ? 'Juntado' : 'Recebido'}: ${novas} novos, ${atual} atualizados, ${mantidas} já em dia.${dup.length ? `<br>⚠ Números repetidos: ${dup.join(', ')} — renumere uma delas.` : ''}`, dup.length ? 'aviso' : 'ok');
+      if (S.projeto?.id === d.projeto.id) await abrirProjeto(d.projeto.id); else if (S.view === 'home') preencherHome();
   }
   const mesclarEsp = (a = [], b = []) => { const m = new Map(); [...a, ...b].forEach(e => m.set(chaveEsp(e[0]), e)); return [...m.values()]; };
   function areaKml(p, z) {
@@ -1261,7 +1459,7 @@
   window.addEventListener('popstate', () => { if (!Plataforma.nativo && S.view !== 'home') { history.pushState(null, ''); acao('voltar'); } });
 
   // ---------------- início ----------------
-  window.App = { METODOS, cientifico, imune: n => !!imune(n), verticesOrdenados, modal, toast, fisionomiaDe };
+  window.App = { equipe: () => S.equipe, METODOS, cientifico, imune: n => !!imune(n), ameaca: (proj, n) => ameaca(n, proj), verticesOrdenados, modal, toast, fisionomiaDe, simNao };
   (async function iniciar() {
     if (!Plataforma.nativo && 'serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
@@ -1279,7 +1477,8 @@
       if (!ativo) { await gravarCabecalho().catch(() => {}); if (S.sujo) await backupAutomatico(); manterTela(false); GPS.desligar(); }
       else { ajustarGPS(); if (S.view === 'parcela' || S.view === 'navegar') manterTela(true); }
     });
-    setInterval(() => { if (S.sujo) backupAutomatico(); }, 60 * 60 * 1000);   // de hora em hora, se houver dado novo
+    setInterval(() => { if (S.sujo) backupAutomatico(); }, 60 * 60 * 1000);
+    Plataforma.aoAbrirArquivo((txt, err) => { if (err || txt == null) toast('Não consegui ler o arquivo. Use 📥 Receber dados na tela inicial.', 'erro'); else receberDados(txt).catch(e => toast('Erro: ' + esc(e.message), 'erro')); });   // de hora em hora, se houver dado novo
     render(); preencherHome();
   })();
 })();

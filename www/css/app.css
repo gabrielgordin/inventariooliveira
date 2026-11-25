@@ -117,7 +117,8 @@ button.item:not(.parcela):not(.arv) { grid-template-columns: 1fr; }
 .modal-fundo { position: fixed; inset: 0; background: #0008; z-index: 30; display: grid; place-items: center; padding: 1rem; }
 .modal { background: var(--fundo); border-radius: var(--r); padding: 1.1rem; width: min(94vw, 440px); }
 .modal .botoes { display: flex; gap: .5rem; margin-top: .8rem; } .modal .botoes > * { flex: 1; }
-.item-proj { display: grid; grid-template-columns: 1fr auto; gap: .4rem; align-items: stretch; }
+.item-proj { display: grid; grid-template-columns: 1fr auto auto; gap: .4rem; align-items: stretch; }
+.btn-lista { background: transparent; border: 1px solid var(--borda); color: var(--texto, inherit); font-size: 1.25rem; width: 52px; padding: 0; }
 .lixeira { background: transparent; border: 1px solid var(--borda); color: var(--ruim); font-size: 1.25rem; width: 52px; padding: 0; }
 button.perigo-cheio { background: var(--ruim); color: #fff; }
 
@@ -206,3 +207,23 @@ input, select, textarea { font-size: max(16px, 1em); } /* evita o zoom automáti
 .m-foto circle { fill: #fff; }
 .m-foto { cursor: pointer; }
 #m-eu, #m-eu * { pointer-events: none; }  /* o marcador da posição não bloqueia o toque nas fotos */
+
+/* desfazer, voz e hipsômetro */
+.tk-acoes > .tk-ico { flex: 0 0 52px; font-size: 1.3rem; padding: 0; }
+.rot-h { display: flex; align-items: center; justify-content: space-between; gap: .3rem; }
+.ico { margin: -.4rem 0; background: transparent; border: 1px solid var(--borda); color: inherit; min-height: 0; padding: .05rem .45rem; font-size: 1.05rem; line-height: 1.3; border-radius: 8px; }
+.extras-form { margin-top: .4rem; }
+.modal-fundo.hipso-fundo { padding: .4rem; }
+.hipso-fundo .modal { width: min(98vw, 480px); max-height: 98vh; overflow: auto; padding: .7rem; }
+.hipso-video { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 3 / 4; max-height: 52vh; margin: 0 auto .5rem; }
+.hipso-video video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hipso-video.sem-camera { aspect-ratio: auto; height: 5.5rem; }
+.hipso-video.sem-camera video { display: none; }
+.mira { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; transform: translate(-50%, -50%); pointer-events: none; }
+.mira::before, .mira::after { content: ''; position: absolute; background: #ff1744; box-shadow: 0 0 0 1px #fff8; }
+.mira::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
+.mira::after { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
+.hipso-ang { position: absolute; left: .5rem; top: .4rem; color: #fff; font-size: 1.4rem; font-weight: 700; text-shadow: 0 1px 3px #000; }
+.hipso-leit { display: flex; justify-content: space-between; gap: .4rem; margin: .4rem 0; font-size: 1.05rem; }
+.hipso-leit b { font-size: 1.2rem; }
+ul.previa { margin: .4rem 0; padding-left: 1.1rem; } ul.previa li { margin: .2rem 0; }

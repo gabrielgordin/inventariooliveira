@@ -27,6 +27,12 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
 
+  // manda direto para o WhatsApp, e-mail, Drive… (no Android grava antes em Documentos/Inventario)
+  async function enviar(blob, nome) {
+    if (Plataforma.nativo) { const r = await Plataforma.salvarArquivo(blob, nome); await Plataforma.compartilhar(r.uri, nome); return; }
+    return entregar(blob, nome);
+  }
+
   function utm(lat, lon, zona) { const u = Geo.paraUTM(lat, lon, zona); return [r(u.E, 2), r(u.N, 2)]; }
 
   // ---------- XLSX ----------
@@ -38,6 +44,7 @@
       XLSX.utils.book_append_sheet(wb, ws, nome);
     };
     const P = proj.params, euc = proj.tipo === 'eucalipto', z = proj.zonaUTM;
+    const amTxt = n => { const a = App.ameaca(proj, n); return a && !a.genero ? `${a.cat} — ${a.catNome}` : ''; };
 
     add('Parametros', [
       ['Parâmetro', 'Valor'],
@@ -70,10 +77,10 @@
         });
       });
     } else {
-      dados.push(['Parcela', 'Estrato', 'Fisionomia', 'Árvore nº', 'Nome popular', 'Nome científico', 'H (m)', 'CAP (cm)', 'CAPs extras (fustes)', 'CAP equivalente (cm)', 'DAP (cm)', 'g (m²)', 'Incluída?', 'VTcc (m³)', 'Imune de corte', 'Observação']);
+      dados.push(['Parcela', 'Estrato', 'Fisionomia', 'Árvore nº', 'Nome popular', 'Nome científico', 'H (m)', 'CAP (cm)', 'CAPs extras (fustes)', 'CAP equivalente (cm)', 'DAP (cm)', 'g (m²)', 'Incluída?', 'VTcc (m³)', 'Imune de corte', 'Ameaçada (Portaria GM/MMA 1.783/2026)', 'Observação']);
       R.porParcela.forEach(({ pc, r: rp }) => rp.arvores.forEach(({ t, c }, i) => dados.push([
         pc.numero, pc.estrato || '', (Calc.EQUACOES[App.fisionomiaDe(proj, pc)] || {}).nome || '', i + 1, t.nome || '', App.cientifico(proj, t.nome), t.H ?? '', t.CAP ?? '', (t.fustesExtras || []).join(' + '),
-        r(c.capEq, 2), r(c.dap, 2), r(c.g, 6), c.incluida ? 'sim' : 'não', r(c.v, 6), App.imune(t.nome) ? 'SIM' : '', t.obs || ''])));
+        r(c.capEq, 2), r(c.dap, 2), r(c.g, 6), c.incluida ? 'sim' : 'não', r(c.v, 6), App.imune(t.nome) ? 'SIM' : '', amTxt(t.nome), t.obs || ''])));
     }
     add('Dados', dados);
 
@@ -115,8 +122,8 @@
     }
     add('Estatistica', est);
 
-    if (R.fito) add('Fitossociologia', [['Nome popular', 'Nome científico', 'N', 'Parcelas', 'G (m²)', 'DA (ind/ha)', 'DR (%)', 'FA (%)', 'FR (%)', 'DoA (m²/ha)', 'DoR (%)', 'VC (%)', 'VI (%)', 'V (m³)', 'V/ha (m³/ha)', 'Imune de corte'],
-      ...R.fito.map(s => [s.nome, App.cientifico(proj, s.nome), s.N, s.nParcelas, r(s.G, 5), r(s.DA, 2), r(s.DR, 2), r(s.FA, 2), r(s.FR, 2), r(s.DoA, 4), r(s.DoR, 2), r(s.VC, 2), r(s.VI, 2), r(s.V, 4), r(s.Vha, 4), App.imune(s.nome) ? 'SIM' : ''])]);
+    if (R.fito) add('Fitossociologia', [['Nome popular', 'Nome científico', 'N', 'Parcelas', 'G (m²)', 'DA (ind/ha)', 'DR (%)', 'FA (%)', 'FR (%)', 'DoA (m²/ha)', 'DoR (%)', 'VC (%)', 'VI (%)', 'V (m³)', 'V/ha (m³/ha)', 'Imune de corte', 'Ameaçada (Portaria GM/MMA 1.783/2026)'],
+      ...R.fito.map(s => [s.nome, App.cientifico(proj, s.nome), s.N, s.nParcelas, r(s.G, 5), r(s.DA, 2), r(s.DR, 2), r(s.FA, 2), r(s.FR, 2), r(s.DoA, 4), r(s.DoR, 2), r(s.VC, 2), r(s.VI, 2), r(s.V, 4), r(s.Vha, 4), App.imune(s.nome) ? 'SIM' : '', amTxt(s.nome)])]);
     if (R.classes) add('Classes_DAP', [['DAP (cm)', 'Nº', '% nº', '% volume'], ...R.classes.map(c => [`${c.min} a ${c.max}`, c.n, r(c.pn, 2), r(c.pv, 2)])]);
 
     const vert = [['Parcela', 'Vértice', 'Nome', 'Latitude', 'Longitude', 'E (m)', 'N (m)', 'Precisão (m)', 'Leituras', 'Data/hora', 'Gerado (não marcado)']];
@@ -201,8 +208,8 @@
     return new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${x(proj.nome)}</name>${estilos}\n${pm}\n</Document></kml>`], { type: 'application/vnd.google-earth.kml+xml' });
   }
   function backup(proj, parcelas, pontos, fotos = []) {
-    return new Blob([JSON.stringify({ formato: 'inventario-florestal', versao: 2, exportado: new Date().toISOString(), projeto: proj, parcelas, pontos, fotos })], { type: 'application/json' });
+    return new Blob([JSON.stringify({ formato: 'inventario-florestal', versao: 2, exportado: new Date().toISOString(), enviadoPor: (root.App && App.equipe && App.equipe()) || '', projeto: proj, parcelas, pontos, fotos })], { type: 'application/json' });
   }
 
-  root.Exportar = { entregar, nomeArquivo, planilhaXLSX, csv, geojson, kml, backup, nomesFotos, semVirgula };
+  root.Exportar = { entregar, enviar, nomeArquivo, planilhaXLSX, csv, geojson, kml, backup, nomesFotos, semVirgula };
 })(window);
