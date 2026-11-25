@@ -105,6 +105,11 @@
     fustes.forEach(s => { s.hEst = hEst(s); });
     const hEstMed = mean(fustes.map(s => s.hEst));
 
+    /* Equação simplificada da planilha (por árvore/fuste): V = (CAP/628,32)² × 3,1416 × H × 0,50,
+       com a altura medida quando houver e, sem ela, a altura estimada pela regressão da parcela. */
+    const hSimpl = s => s.H > 0 ? s.H : (reg ? Math.exp(reg.b0 + reg.b1 / dapDeCap(s.CAP)) : hMed);
+    fustes.forEach(s => { s.hSimpl = hSimpl(s); });
+    const simplificada = sum(fustes.map(s => (s.CAP / 628.32) ** 2 * 3.1416 * s.hSimpl * f));
     const vPadrao = nF ? gDeCap(capMed) * nF * hMed * f : 0;           // árvore média, H medida
     const vArvMediaReg = nF ? gDeCap(capMed) * nF * hEstMed * f : 0;   // árvore média, H da regressão
     const vol2 = sum(fustes.map(s => gDeCap(s.CAP) * s.hEst * f));    // por fuste, H da regressão
@@ -114,10 +119,10 @@
     return {
       nArvores: nArv, nFustes: nF, nFalhas: falhas, nComH: comH.length,
       capMed, hMed, hEstMed, g, regressao: reg, fustes,
-      vol: { padrao: vPadrao, arvMediaReg: vArvMediaReg, vol2, eqMedia, eqFuste },
+      vol: { simplificada, padrao: vPadrao, arvMediaReg: vArvMediaReg, vol2, eqMedia, eqFuste },
       ha: {
         arvores: nArv * ha, fustes: nF * ha, g: g * ha,
-        padrao: vPadrao * ha, arvMediaReg: vArvMediaReg * ha, vol2: vol2 * ha, eqMedia: eqMedia * ha, eqFuste: eqFuste * ha
+        simplificada: simplificada * ha, padrao: vPadrao * ha, arvMediaReg: vArvMediaReg * ha, vol2: vol2 * ha, eqMedia: eqMedia * ha, eqFuste: eqFuste * ha
       }
     };
   }
@@ -285,7 +290,13 @@
   }
   const fmtBR = v => (Math.round(v * 10) / 10).toString().replace('.', ',');
 
-  const api = {
+  // Equações de volume (DAP em cm, H em m) da planilha de 25/11/2026
+  const EQUACOES = {
+    cerrado: { nome: 'Cerrado', b0: 0.000066, b1: 2.475293, b2: 0.300022, fator: 1 },
+    cerradao: { nome: 'Cerradão', b0: 0.000094, b1: 1.830398, b2: 0.960913, fator: 1 }
+  };
+
+  const api = { EQUACOES,
     tinv, mean, variance, sum, dapDeCap, gDeCap, volEquacao, regressao,
     parcelaEucalipto, parcelaCerrado, arvoreCerrado, estatistica, estratificada,
     fitossociologia, classesDap, alertasArvore, foraDaMedia

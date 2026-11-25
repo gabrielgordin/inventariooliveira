@@ -7,24 +7,32 @@
   const P = nativo ? Cap.Plugins : {};
 
   // ---------- GPS ----------
+  // Liga o GPS em alta precisão; devolve uma função que o desliga (para poupar bateria)
   async function iniciarGPS(aoLer, aoErro) {
     if (!nativo) {
-      if (!navigator.geolocation) { aoErro('GPS indisponível neste navegador'); return; }
-      navigator.geolocation.watchPosition(aoLer, e => aoErro(e.code === 1 ? 'Permissão de localização negada' : e.message),
+      if (!navigator.geolocation) { aoErro('GPS indisponível neste navegador'); return () => {}; }
+      const id = navigator.geolocation.watchPosition(aoLer, e => aoErro(e.code === 1 ? 'Permissão de localização negada' : e.message),
         { enableHighAccuracy: true, maximumAge: 0, timeout: 60000 });
-      return;
+      return () => navigator.geolocation.clearWatch(id);
     }
     try {
       const st = await P.Geolocation.checkPermissions();
       if (st.location !== 'granted') {
         const r = await P.Geolocation.requestPermissions({ permissions: ['location'] });
-        if (r.location !== 'granted') { aoErro('Permissão de localização negada'); return; }
+        if (r.location !== 'granted') { aoErro('Permissão de localização negada'); return () => {}; }
       }
-      await P.Geolocation.watchPosition({ enableHighAccuracy: true, maximumAge: 0, timeout: 60000, minimumUpdateInterval: 500 }, (pos, err) => {
+      const id = await P.Geolocation.watchPosition({ enableHighAccuracy: true, maximumAge: 0, timeout: 60000, minimumUpdateInterval: 1000 }, (pos, err) => {
         if (err) { aoErro(err.message || String(err)); return; }
         if (pos) aoLer({ coords: pos.coords, timestamp: pos.timestamp || Date.now() });
       });
-    } catch (e) { aoErro(e.message || String(e)); }
+      return () => { try { P.Geolocation.clearWatch({ id }); } catch (e) { /* já parado */ } };
+    } catch (e) { aoErro(e.message || String(e)); return () => {}; }
+  }
+
+  // app indo para segundo plano / voltando (Android); no navegador usa a visibilidade da página
+  function aoMudarEstado(fn) {
+    if (nativo && P.App) P.App.addListener('appStateChange', st => fn(!!st.isActive));
+    else document.addEventListener('visibilitychange', () => fn(document.visibilityState === 'visible'));
   }
 
   // ---------- tela acesa ----------
@@ -91,6 +99,30 @@
     return r.uri;
   }
 
+  // ---------- localização gravada dentro da foto (EXIF GPS) ----------
+  function comExif(dataURL, f) {
+    if (!root.piexif || !/^data:image\/jpeg/.test(dataURL)) return dataURL;
+    try {
+      const dms = v => { v = Math.abs(v); const d = Math.floor(v), m = Math.floor((v - d) * 60), s = Math.round(((v - d) * 60 - m) * 60 * 10000); return [[d, 1], [m, 1], [s, 10000]]; };
+      const h = (f.hora || '').replace('T', ' ');
+      const dt = h ? h.slice(0, 19).replace(/-/g, ':') : null;
+      const exif = { '0th': { [piexif.ImageIFD.Software]: 'Inventario Florestal' }, Exif: {}, GPS: {} };
+      if (dt) { exif.Exif[piexif.ExifIFD.DateTimeOriginal] = dt; exif['0th'][piexif.ImageIFD.DateTime] = dt; }
+      if (f.lat != null && f.lon != null) {
+        exif.GPS[piexif.GPSIFD.GPSVersionID] = [2, 3, 0, 0];
+        exif.GPS[piexif.GPSIFD.GPSLatitudeRef] = f.lat < 0 ? 'S' : 'N';
+        exif.GPS[piexif.GPSIFD.GPSLatitude] = dms(f.lat);
+        exif.GPS[piexif.GPSIFD.GPSLongitudeRef] = f.lon < 0 ? 'W' : 'E';
+        exif.GPS[piexif.GPSIFD.GPSLongitude] = dms(f.lon);
+        if (f.alt != null) { exif.GPS[piexif.GPSIFD.GPSAltitudeRef] = f.alt < 0 ? 1 : 0; exif.GPS[piexif.GPSIFD.GPSAltitude] = [Math.round(Math.abs(f.alt) * 100), 100]; }
+        if (f.acc != null) exif.GPS[piexif.GPSIFD.GPSHPositioningError] = [Math.round(f.acc * 100), 100];
+        exif.GPS[piexif.GPSIFD.GPSMapDatum] = 'WGS-84';
+      }
+      const limpo = piexif.remove(dataURL);
+      return piexif.insert(piexif.dump(exif), limpo);
+    } catch (e) { console.error('EXIF', e); return dataURL; }
+  }
+
   // ---------- vibração curta ao tocar nas teclas ----------
   function vibrar() { try { navigator.vibrate && navigator.vibrate(12); } catch (e) { /* sem suporte */ } }
 
@@ -101,5 +133,5 @@
     return true;
   }
 
-  root.Plataforma = { nativo, iniciarGPS, manterTela, salvarArquivo, salvarSilencioso, compartilhar, aoVoltar, tirarFoto, vibrar, paraBase64 };
+  root.Plataforma = { nativo, iniciarGPS, aoMudarEstado, comExif, manterTela, salvarArquivo, salvarSilencioso, compartilhar, aoVoltar, tirarFoto, vibrar, paraBase64 };
 })(window);

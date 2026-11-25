@@ -12,14 +12,16 @@
   const agora = () => new Date().toLocaleString('sv-SE').slice(0, 19);
 
   const METODOS = {
+    simplificada: 'Simplificada da planilha (por árvore: g × H × 0,50)',
     padrao: 'Padrão (árvore média, H medida)', arvMediaReg: 'Árvore média, H da regressão',
     vol2: 'Volume II (por fuste, H da regressão)', eqMedia: 'Equação, árvore média', eqFuste: 'Equação, por fuste'
   };
   const PRESETS = {
     eucalipto: { comprimento: 20, largura: 15, capMin: 0, fatorForma: 0.5, eq: { b0: 0.000066, b1: 2.475293, b2: 0.300022, fator: 0.981 },
-      prob: 0.9, erroAdm: 0.1, fatorEmp: 1.5, desvio: 'amostral', fpc: true, metodo: 'padrao', usarHMedida: false, espacamento: '3 x 2', segundosGPS: 10 },
-    cerrado: { comprimento: 20, largura: 10, capMin: 15.7, fatorForma: 0.5, eq: { b0: 6.5661e-05, b1: 2.475293, b2: 0.300022, fator: 1 },
-      prob: 0.9, erroAdm: 0.1, fatorEmp: 1.5, desvio: 'amostral', fpc: true, metodo: 'padrao', usarHMedida: false, espacamento: '', segundosGPS: 10 }
+      prob: 0.9, erroAdm: 0.1, fatorEmp: 1.5, desvio: 'amostral', fpc: true, metodo: 'simplificada', usarHMedida: false, espacamento: '3 x 2', segundosGPS: 10, versaoEq: 2 },
+    cerrado: { comprimento: 20, largura: 10, capMin: 15.7, fatorForma: 0.5, eq: { ...Calc.EQUACOES.cerrado },
+      eqs: { cerrado: { ...Calc.EQUACOES.cerrado }, cerradao: { ...Calc.EQUACOES.cerradao } }, fisionomia: 'cerrado',
+      prob: 0.9, erroAdm: 0.1, fatorEmp: 1.5, desvio: 'amostral', fpc: true, metodo: 'padrao', usarHMedida: false, espacamento: '', segundosGPS: 10, versaoEq: 2 }
   };
 
   const S = { view: 'home', aba: 'parcelas', projeto: null, parcelas: [], pontos: [], fotos: [], parcelaId: null, editando: null, extras: [], equipe: '', mapa: null,
@@ -33,6 +35,23 @@
     return l ? l[1] : '';
   }
   const params = proj => ({ ...proj.params, areaParcela: proj.params.comprimento * proj.params.largura });
+  // Nativa: a equação vem da fisionomia do estrato da parcela (ou a padrão do inventário)
+  function fisionomiaDe(proj, pc) {
+    const e = (proj.estratos || []).find(x => x.nome === pc?.estrato);
+    return (e && e.fisionomia) || proj.params.fisionomia || 'cerrado';
+  }
+  function paramsParcela(proj, pc) {
+    const p = params(proj);
+    if (proj.tipo !== 'eucalipto' && p.eqs) p.eq = p.eqs[fisionomiaDe(proj, pc)] || p.eq;
+    return p;
+  }
+  // Atualiza inventários criados antes das equações de 25/11/2026
+  function migrarEquacoes(proj) {
+    const P = proj.params; if (!P || P.versaoEq >= 2) return false;
+    if (proj.tipo === 'eucalipto') { if (P.metodo === 'padrao') P.metodo = 'simplificada'; }
+    else { P.eqs = { cerrado: { ...Calc.EQUACOES.cerrado }, cerradao: { ...Calc.EQUACOES.cerradao } }; P.fisionomia = P.fisionomia || 'cerrado'; P.eq = { ...P.eqs.cerrado }; }
+    P.versaoEq = 2; return true;
+  }
   const areaTotal = proj => (proj.estratos?.length ? proj.estratos.reduce((s, e) => s + (+e.areaHa || 0), 0) : (+proj.areaHa || 0));
   const zona = (proj, ref) => proj.zonaUTM || (ref ? Geo.zonaDe(ref.lon) : 23);
   const ordNum = (a, b) => (parseInt(a.numero) || 0) - (parseInt(b.numero) || 0) || String(a.numero).localeCompare(String(b.numero));
@@ -63,7 +82,7 @@
   function calcular(proj, parcelas) {
     const p = params(proj), euc = proj.tipo === 'eucalipto';
     const usadas = parcelas.filter(x => !x.excluir).sort(ordNum);
-    const porParcela = usadas.map(pc => ({ pc, r: euc ? Calc.parcelaEucalipto(pc.arvores, p) : Calc.parcelaCerrado(pc.arvores, p), geo: geoParcela(proj, pc) }));
+    const porParcela = usadas.map(pc => ({ pc, r: euc ? Calc.parcelaEucalipto(pc.arvores, p) : Calc.parcelaCerrado(pc.arvores, paramsParcela(proj, pc)), geo: geoParcela(proj, pc) }));
     const vha = x => euc ? x.r.ha[p.metodo] : x.r.ha.v;
     const areaHa = areaTotal(proj);
     const o = { prob: p.prob, areaHa, areaParcela: p.areaParcela, desvio: p.desvio, fpc: p.fpc, erroAdm: p.erroAdm, fatorEmp: p.fatorEmp };
@@ -97,51 +116,93 @@
   }
 
   // ---------------- GPS ----------------
+  /* GPS: fica ligado só nas telas que usam (economia de bateria) e desliga com o app em segundo plano.
+     A marcação de ponto espera a precisão desejada, descarta leituras ruins e faz a média ponderada. */
   const GPS = {
-    pos: null, erro: null, watchId: null, leituras: [],
-    iniciar() {
-      if (this.watchId != null) return;
-      this.watchId = 1;
-      Plataforma.iniciarGPS(p => {
+    pos: null, erro: null, parar: null, ligando: false, leituras: [], temporario: 0, ativo: true,
+    async iniciar() {
+      if (this.parar || this.ligando) return;
+      this.ligando = true;
+      this.parar = await Plataforma.iniciarGPS(p => {
         this.pos = p; this.erro = null; this.leituras.push(p); if (this.leituras.length > 900) this.leituras.shift(); chipGPS();
         if (S.view === 'projeto' && S.aba === 'mapa') Mapa.posicao();
         if (S.view === 'navegar') atualizarNav();
       }, msg => { this.erro = msg; chipGPS(); });
+      this.ligando = false; chipGPS();
+    },
+    desligar() { if (this.parar) { this.parar(); this.parar = null; } chipGPS(); },
+    ligado() { return !!this.parar || this.ligando; },
+    // liga por um tempo (foto, toque no selo do GPS) mesmo fora das telas que usam GPS
+    ligarPor(ms) { this.temporario = Math.max(this.temporario, Date.now() + ms); ajustarGPS(); setTimeout(ajustarGPS, ms + 500); },
+    fresca(maxIdadeMs = 20000, maxAcc = 50) {
+      const p = this.pos; return p && Date.now() - p.timestamp < maxIdadeMs && p.coords.accuracy <= maxAcc ? p : null;
+    },
+    // espera uma posição boa (para a foto), até `ms`
+    async posicaoAte(ms) {
+      this.ligarPor(ms + 30000);
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) { const p = this.fresca(); if (p) return p; await new Promise(r => setTimeout(r, 400)); }
+      return this.fresca(60000, 200);
     },
     capturar(segundos, titulo) {
-      this.iniciar();
+      this.capturando = true; ajustarGPS();
+      const alvo = S.projeto?.params?.precisaoAlvo ?? 5, maxSeg = Math.max(segundos, S.projeto?.params?.esperaMaxGPS ?? 60);
       return new Promise(resolve => {
         const t0 = Date.now();
         const m = modal(`<h3>${esc(titulo || 'Marcando ponto')}</h3>
-          <p class="grande" id="gps-cont">Aguardando sinal…</p><p id="gps-det" class="mudo"></p>
-          <p class="mudo">Fique parado no ponto. O app faz a média das leituras de ${segundos} s.</p>
+          <p class="grande" id="gps-cont">Aguardando sinal…</p><p id="gps-det"></p><p id="gps-med" class="mudo"></p>
+          <p class="mudo">Fique parado no ponto, com o celular na altura do peito e longe do corpo. O app junta leituras por ${segundos} s e, se a precisão não chegar a ±${fmt(alvo, 0)} m, continua esperando até ${maxSeg} s.</p>
           <div class="botoes"><button class="sec" data-m="cancelar">Cancelar</button><button data-m="usar">Usar agora</button></div>`);
-        const fim = usar => {
-          clearInterval(iv); m.remove();
-          if (!usar) return resolve(null);
-          const L = this.leituras.filter(p => p.timestamp >= t0 - 1500);
-          if (!L.length) { if (this.pos) L.push(this.pos); else { toast('Sem sinal de GPS', 'erro'); return resolve(null); } }
+        const media = () => {
+          let L = this.leituras.filter(p => p.timestamp >= t0 - 1500);
+          if (!L.length) return null;
           const melhor = Math.min(...L.map(p => p.coords.accuracy));
-          const boas = L.filter(p => p.coords.accuracy <= Math.max(melhor * 2, 5));
-          let sw = 0, la = 0, lo = 0, al = 0, na = 0;
-          boas.forEach(p => { const w = 1 / Math.max(p.coords.accuracy, 1) ** 2; sw += w; la += p.coords.latitude * w; lo += p.coords.longitude * w;
-            if (p.coords.altitude != null) { al += p.coords.altitude; na++; } });
-          const accs = boas.map(p => p.coords.accuracy).sort((a, b) => a - b);
-          resolve({ lat: la / sw, lon: lo / sw, acc: accs[Math.floor(accs.length / 2)], alt: na ? al / na : null, n: boas.length, hora: agora() });
+          L = L.filter(p => p.coords.accuracy <= Math.max(melhor * 2, alvo * 1.5, 4));       // descarta leituras muito piores que a melhor
+          const z = Geo.zonaDe(L[0].coords.longitude);
+          const U = L.map(p => ({ p, u: Geo.paraUTM(p.coords.latitude, p.coords.longitude, z), w: 1 / Math.max(p.coords.accuracy, 1) ** 2 }));
+          const centro = q => { const sw = q.reduce((s, x) => s + x.w, 0); return { E: q.reduce((s, x) => s + x.u.E * x.w, 0) / sw, N: q.reduce((s, x) => s + x.u.N * x.w, 0) / sw }; };
+          let c = centro(U);
+          const dists = U.map(x => Geo.dist(x.u, c)).sort((a, b) => a - b), med = dists[Math.floor(dists.length / 2)];
+          const bons = U.filter(x => Geo.dist(x.u, c) <= Math.max(2.5 * med, 1.5));                // descarta pontos que "pularam"
+          c = centro(bons);
+          const disp = Math.sqrt(bons.reduce((s, x) => s + Geo.dist(x.u, c) ** 2, 0) / bons.length);
+          const accs = bons.map(x => x.p.coords.accuracy).sort((a, b) => a - b), accMed = accs[Math.floor(accs.length / 2)];
+          const alts = bons.map(x => x.p.coords.altitude).filter(v => v != null);
+          const ll = Geo.deUTM(c.E, c.N, z, bons[0].p.coords.latitude < 0);
+          return { lat: ll.lat, lon: ll.lon, acc: accMed, disp, alt: alts.length ? alts.reduce((a, b) => a + b, 0) / alts.length : null, n: bons.length, descartadas: L.length - bons.length };
+        };
+        const fim = usar => {
+          clearInterval(iv); m.remove(); this.capturando = false; ajustarGPS();
+          if (!usar) return resolve(null);
+          const r = media() || (this.pos ? { lat: this.pos.coords.latitude, lon: this.pos.coords.longitude, acc: this.pos.coords.accuracy, n: 1 } : null);
+          if (!r) { toast('Sem sinal de GPS', 'erro'); return resolve(null); }
+          resolve({ ...r, hora: agora() });
         };
         m.addEventListener('click', e => { const a = e.target.dataset.m; if (a) fim(a === 'usar'); });
         const iv = setInterval(() => {
-          const L = this.leituras.filter(p => p.timestamp >= t0 - 1500), dec = (Date.now() - t0) / 1000;
-          const ac = this.pos ? this.pos.coords.accuracy : null;
-          $('#gps-cont', m).textContent = L.length ? `${L.length} leituras · ${Math.max(0, Math.ceil(segundos - dec))} s` : (this.erro || 'Aguardando sinal…');
-          $('#gps-det', m).textContent = ac != null ? `precisão atual ±${fmt(ac, 1)} m` : '';
-          if (dec >= segundos && L.length) fim(true);
-        }, 300);
+          const dec = (Date.now() - t0) / 1000, r = media(), ac = this.pos ? this.pos.coords.accuracy : null;
+          $('#gps-cont', m).textContent = r ? `${r.n} leituras boas · ${Math.floor(dec)} s` : (this.erro || 'Aguardando sinal…');
+          $('#gps-det', m).innerHTML = ac != null ? `Precisão agora: <b class="${ac <= alvo ? 'ok-txt' : 'ruim-txt'}">±${fmt(ac, 1)} m</b> (alvo ±${fmt(alvo, 0)} m)` : '';
+          $('#gps-med', m).textContent = r ? `Média: precisão ±${fmt(r.acc, 1)} m · dispersão das leituras ${fmt(r.disp, 1)} m${r.descartadas ? ` · ${r.descartadas} descartada(s)` : ''}` : '';
+          if (r && r.n >= 3 && dec >= segundos && (r.acc <= alvo || dec >= maxSeg)) fim(true);
+        }, 400);
       });
     }
   };
+  // Liga o GPS só onde ele é usado; desliga no resto e com o app em segundo plano
+  function gpsNecessario() {
+    if (!GPS.ativo) return false;
+    if (GPS.capturando || Date.now() < GPS.temporario) return true;
+    if (S.view === 'navegar') return true;
+    if (S.view === 'projeto' && (S.aba === 'mapa' || S.aba === 'pontos')) return true;
+    if (S.view === 'parcela') { const pc = parcelaAtual(); return !pc || pc.vertices.length < 4 || S.gpsParcela; }
+    return false;
+  }
+  function ajustarGPS() { if (gpsNecessario()) GPS.iniciar(); else GPS.desligar(); }
   function chipGPS() {
     const c = $('#chip-gps'); if (!c) return;
+    c.dataset.a = 'gps-chip';
+    if (!GPS.ligado()) { c.textContent = 'GPS em pausa'; c.className = 'chip pausa'; c.title = 'Desligado para poupar bateria. Toque para ligar.'; return; }
     if (GPS.erro && !GPS.pos) { c.textContent = 'GPS: ' + GPS.erro; c.className = 'chip ruim'; return; }
     if (!GPS.pos) { c.textContent = 'GPS…'; c.className = 'chip'; return; }
     const a = GPS.pos.coords.accuracy;
@@ -151,6 +212,7 @@
   // ---------------- tela mantida acesa ----------------
   let wake = null;
   async function manterTela(on) {
+    if (on && S.view === 'parcela' && !S.telaAcesa) on = false;   // preferência: manter a tela acesa na parcela
     if (await Plataforma.manterTela(on)) return;
     try {
       if (on && !wake && 'wakeLock' in navigator) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); }
@@ -162,6 +224,7 @@
   // ---------------- carga e gravação ----------------
   async function abrirProjeto(id) {
     S.projeto = await DB.pegar('projetos', id);
+    if (migrarEquacoes(S.projeto)) await DB.salvar('projetos', S.projeto);
     S.parcelas = (await DB.porProjeto('parcelas', id)).sort(ordNum);
     S.pontos = await DB.porProjeto('pontos', id);
     S.fotos = await DB.porProjeto('fotos', id);
@@ -188,7 +251,7 @@
     const ajustes = S.view === 'parcela' ? `<button class="engrenagem" data-a="ir-ajustes" aria-label="Ajustes do inventário" title="Ajustes do inventário (KML, estratos, parâmetros)">⚙</button>` : '';
     const sol = `<button class="sol-btn ${S.sol ? 'on' : ''}" data-a="sol" aria-label="Modo sol forte" title="Modo sol forte (alto contraste)">☀</button>`;
     app.innerHTML = `<header>${voltar}<h1>${titulo}</h1><span id="chip-gps" class="chip">GPS…</span>${sol}${ajustes}</header><main>${corpo}</main>`;
-    chipGPS();
+    ajustarGPS(); chipGPS();
     document.body.classList.toggle('com-teclado', usaTeclado() && !S.tecladoPausa);
     if (S.view !== 'parcela') S.tecladoPausa = false;
     if (S.view === 'parcela') {
@@ -209,6 +272,7 @@
         <p class="mudo">Vai junto em cada parcela, para juntar os dados de dois aparelhos depois.</p>
         <button class="sec" data-a="salvar-equipe">Salvar</button>
         <label class="check"><input type="checkbox" id="pref-teclado" ${S.teclado ? 'checked' : ''}> Usar o teclado numérico do app (teclas grandes) no lançamento das árvores</label>
+        <label class="check"><input type="checkbox" id="pref-tela" ${S.telaAcesa ? 'checked' : ''}> Manter a tela acesa durante o lançamento da parcela (desligar economiza bateria; na navegação a tela fica sempre acesa)</label>
         <label class="check"><input type="checkbox" id="pref-sol" ${S.sol ? 'checked' : ''}> Modo sol forte (alto contraste e letra maior) — também no botão ☀ do topo</label>
         <p class="mudo" id="armazenamento"></p></details>
       <p class="mudo rodape">Os dados ficam só neste aparelho. Exporte o backup ao fim de cada dia de campo.</p></section>`;
@@ -239,9 +303,11 @@
     const P = pr.params, euc = pr.tipo === 'eucalipto';
     const estr = (pr.estratos || []).map((e, i) => `<div class="estrato"><input data-estr="${i}" data-c="nome" value="${esc(e.nome)}">
       <input data-estr="${i}" data-c="areaHa" inputmode="decimal" value="${esc(String(e.areaHa).replace('.', ','))}"><span class="mudo">ha${e.coords ? ' · KML' : ''}</span>
-      <button class="mini sec" data-a="del-estrato" data-i="${i}">✕</button></div>`).join('');
+      <button class="mini sec" data-a="del-estrato" data-i="${i}">✕</button>
+      ${euc ? '' : `<select class="estr-fis" data-estr="${i}" data-c="fisionomia"><option value="">Fisionomia: a padrão</option>
+        <option value="cerrado" ${e.fisionomia === 'cerrado' ? 'selected' : ''}>Cerrado</option><option value="cerradao" ${e.fisionomia === 'cerradao' ? 'selected' : ''}>Cerradão</option></select>`}</div>`).join('');
     return `<section class="form" id="form-config">
-      ${novo ? `<div class="seletor-tipo"><button class="${!euc ? 'ativo' : 'sec'}" data-a="tipo" data-t="cerrado">Cerrado nativo</button><button class="${euc ? 'ativo' : 'sec'}" data-a="tipo" data-t="eucalipto">Reflorestamento (eucalipto)</button></div>` : ''}
+      ${novo ? `<div class="seletor-tipo"><button class="${!euc ? 'ativo' : 'sec'}" data-a="tipo" data-t="cerrado">Nativa (cerrado / cerradão)</button><button class="${euc ? 'ativo' : 'sec'}" data-a="tipo" data-t="eucalipto">Reflorestamento (eucalipto)</button></div>` : ''}
       <label>Nome do inventário<input id="c-nome" value="${esc(pr.nome)}" placeholder="ex.: Faz. Bons Olhos"></label>
       <div class="grade2"><label>Parcela: comprimento (m)<input id="c-comp" inputmode="decimal" value="${vIn(P.comprimento)}"></label>
       <label>largura (m)<input id="c-larg" inputmode="decimal" value="${vIn(P.largura)}"></label></div>
@@ -250,14 +316,23 @@
         <label>Método principal (o que aparece em destaque)<select id="c-met">${Object.entries(METODOS).map(([k, v]) => `<option value="${k}" ${P.metodo === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label class="check"><input type="checkbox" id="c-hmed" ${P.usarHMedida ? 'checked' : ''}> Usar a altura medida quando houver (desmarcado = altura da regressão em todos os fustes, como na planilha)</label>`
         : `<label>CAP mínimo de inclusão (cm)<input id="c-capmin" inputmode="decimal" value="${vIn(P.capMin)}"></label>`}
-      <fieldset><legend>Equação de volume: V = b0 · DAP^b1 · H^b2 · fator</legend>
+      ${euc ? `<fieldset><legend>Equação para os métodos "Equação" (comparação): V = b0 · DAP^b1 · H^b2 · fator</legend>
+        <p class="mudo">O método principal (simplificado) não usa esta equação.</p>
         <div class="grade2"><label>b0<input id="c-b0" inputmode="decimal" value="${vIn(P.eq.b0)}"></label><label>b1<input id="c-b1" inputmode="decimal" value="${vIn(P.eq.b1)}"></label>
-        <label>b2<input id="c-b2" inputmode="decimal" value="${vIn(P.eq.b2)}"></label><label>fator<input id="c-fat" inputmode="decimal" value="${vIn(P.eq.fator)}"></label></div></fieldset>
+        <label>b2<input id="c-b2" inputmode="decimal" value="${vIn(P.eq.b2)}"></label><label>fator<input id="c-fat" inputmode="decimal" value="${vIn(P.eq.fator)}"></label></div></fieldset>`
+      : `<fieldset><legend>Equações de volume: V = b0 · DAP^b1 · H^b2 (DAP em cm, H em m)</legend>
+        <label>Fisionomia padrão do inventário<select id="c-fis"><option value="cerrado" ${P.fisionomia !== 'cerradao' ? 'selected' : ''}>Cerrado</option><option value="cerradao" ${P.fisionomia === 'cerradao' ? 'selected' : ''}>Cerradão</option></select></label>
+        <p class="mudo">Cada estrato pode ter a sua fisionomia (lista Estratos, abaixo). A parcela usa a equação do estrato dela.</p>
+        ${['cerrado', 'cerradao'].map(k => { const q = (P.eqs || {})[k] || Calc.EQUACOES[k]; return `<p><b>${Calc.EQUACOES[k].nome}</b></p><div class="grade3">
+          <label>b0<input id="c-${k}-b0" inputmode="decimal" value="${vIn(q.b0)}"></label><label>b1<input id="c-${k}-b1" inputmode="decimal" value="${vIn(q.b1)}"></label><label>b2<input id="c-${k}-b2" inputmode="decimal" value="${vIn(q.b2)}"></label></div>`; }).join('')}
+        <button class="sec mini" data-a="eq-padrao">Voltar às equações da planilha</button></fieldset>`}
       <fieldset><legend>Estatística</legend>
         <div class="grade2"><label>Probabilidade (%)<input id="c-prob" inputmode="decimal" value="${vIn(P.prob * 100)}"></label>
         <label>Erro admissível (%)<input id="c-erro" inputmode="decimal" value="${vIn(P.erroAdm * 100)}"></label>
         <label>Estéreo por m³<input id="c-emp" inputmode="decimal" value="${vIn(P.fatorEmp)}"></label>
-        <label>GPS: segundos de média<input id="c-seg" inputmode="numeric" value="${P.segundosGPS ?? 10}"></label></div>
+        <label>GPS: segundos de média<input id="c-seg" inputmode="numeric" value="${P.segundosGPS ?? 10}"></label>
+        <label>GPS: precisão desejada (m)<input id="c-alvo" inputmode="decimal" value="${vIn(P.precisaoAlvo ?? 5)}"></label>
+        <label>GPS: espera máxima (s)<input id="c-espera" inputmode="numeric" value="${P.esperaMaxGPS ?? 60}"></label></div>
         <label>Desvio padrão<select id="c-desv"><option value="amostral" ${P.desvio !== 'populacional' ? 'selected' : ''}>Amostral (n−1)</option><option value="populacional" ${P.desvio === 'populacional' ? 'selected' : ''}>Populacional (como na planilha antiga de eucalipto)</option></select></label>
         <label class="check"><input type="checkbox" id="c-fpc" ${P.fpc ? 'checked' : ''}> Correção de população finita</label></fieldset>
       <fieldset><legend>Estratos / áreas</legend>
@@ -277,12 +352,17 @@
     P.comprimento = n('c-comp') || P.comprimento; P.largura = n('c-larg') || P.largura;
     if (g('c-ff')) { P.fatorForma = n('c-ff') ?? P.fatorForma; P.espacamento = g('c-esp').value; P.metodo = g('c-met').value; P.usarHMedida = g('c-hmed').checked; }
     if (g('c-capmin')) P.capMin = n('c-capmin') ?? 0;
-    P.eq = { b0: n('c-b0'), b1: n('c-b1'), b2: n('c-b2'), fator: n('c-fat') ?? 1 };
-    P.prob = (n('c-prob') ?? 90) / 100; P.erroAdm = (n('c-erro') ?? 10) / 100; P.fatorEmp = n('c-emp') ?? 1.5; P.segundosGPS = n('c-seg') ?? 10;
+    if (g('c-b0')) P.eq = { b0: n('c-b0'), b1: n('c-b1'), b2: n('c-b2'), fator: n('c-fat') ?? 1 };
+    if (g('c-fis')) {
+      P.fisionomia = g('c-fis').value;
+      P.eqs = {}; ['cerrado', 'cerradao'].forEach(k => { P.eqs[k] = { nome: Calc.EQUACOES[k].nome, b0: n(`c-${k}-b0`), b1: n(`c-${k}-b1`), b2: n(`c-${k}-b2`), fator: 1 }; });
+      P.eq = { ...P.eqs[P.fisionomia] };
+    }
+    P.prob = (n('c-prob') ?? 90) / 100; P.erroAdm = (n('c-erro') ?? 10) / 100; P.fatorEmp = n('c-emp') ?? 1.5; P.segundosGPS = n('c-seg') ?? 10; P.precisaoAlvo = n('c-alvo') ?? 5; P.esperaMaxGPS = n('c-espera') ?? 60;
     P.desvio = g('c-desv').value; P.fpc = g('c-fpc').checked;
     document.querySelectorAll('[data-estr]').forEach(inp => {
       const e = base.estratos[+inp.dataset.estr]; if (!e) return;
-      if (inp.dataset.c === 'nome') e.nome = inp.value.trim(); else e.areaHa = numIn(inp.value) ?? 0;
+      if (inp.dataset.c === 'nome') e.nome = inp.value.trim(); else if (inp.dataset.c === 'fisionomia') e.fisionomia = inp.value; else e.areaHa = numIn(inp.value) ?? 0;
     });
     return { nome: g('c-nome').value.trim(), params: P, areaHa: g('c-area') ? numIn(g('c-area').value) : base.areaHa };
   }
@@ -334,7 +414,7 @@
   function telaParcela() {
     const pc = parcelaAtual(); if (!pc) return '';
     const proj = S.projeto, P = params(proj), euc = proj.tipo === 'eucalipto';
-    const r = euc ? Calc.parcelaEucalipto(pc.arvores, P) : Calc.parcelaCerrado(pc.arvores, P);
+    const r = euc ? Calc.parcelaEucalipto(pc.arvores, P) : Calc.parcelaCerrado(pc.arvores, paramsParcela(proj, pc));
     const g = geoParcela(proj, pc);
     const nomEsp = [P.comprimento, P.largura];
     const ladosTxt = g?.lados?.length ? g.lados.map(l => fmt(l, 1)).join(' · ') : '';
@@ -343,7 +423,7 @@
     const estrOpts = (proj.estratos || []).map(e => `<option ${pc.estrato === e.nome ? 'selected' : ''}>${esc(e.nome)}</option>`).join('');
 
     const vert = `<details class="cartao" ${pc.vertices.length < 4 && !pc.arvores.length ? 'open' : ''}><summary>Vértices GPS (${pc.vertices.length}) ${g?.area ? `· ${fmt(g.area, 0)} m²` : ''} ${loc}</summary>
-      ${pc.vertices.map((v, i) => `<div class="vert"><span>V${i + 1}${v.gerado ? ' (gerado)' : ''}</span><span class="mudo">±${fmt(v.acc, 1)} m · ${v.n || 1} leit.</span><button class="mini sec" data-a="del-vertice" data-i="${i}">✕</button></div>`).join('')}
+      ${pc.vertices.map((v, i) => `<div class="vert"><span>V${i + 1}${v.gerado ? ' (gerado)' : ''}</span><span class="mudo">±${fmt(v.acc, 1)} m${v.disp != null ? ` · disp. ${fmt(v.disp, 1)} m` : ''} · ${v.n || 1} leit.</span><button class="mini sec" data-a="del-vertice" data-i="${i}">✕</button></div>`).join('')}
       ${ladosTxt ? `<p>Lados: ${ladosTxt} m${g.area ? ` · área ${fmt(g.area, 0)} m² <span class="tag ${areaOk ? 'bom' : 'ruim'}">${areaOk ? 'confere' : 'difere'} de ${P.areaParcela} m²</span>` : ''}</p>` : ''}
       <div class="linha-botoes"><button data-a="marcar-vertice">Marcar vértice ${pc.vertices.length + 1}</button>
       ${pc.vertices.length === 2 ? `<button class="sec" data-a="completar">Completar ${nomEsp[0]}×${nomEsp[1]}</button>` : ''}</div></details>`;
@@ -463,7 +543,8 @@
     if (!R.porParcela.length) return '<p class="mudo">Lance parcelas para ver os resultados.</p>';
     const linha = (k, v, w = '') => `<tr><td>${k}</td><td>${v}</td>${w !== null ? `<td class="mudo">${w}</td>` : ''}</tr>`;
     let h = resumoErro(R);
-    h += `<div class="cartao"><h3>${euc ? esc(METODOS[P.metodo]) : 'Volume (VTcc)'}</h3><table class="tab">
+    const fisUsadas = euc ? [] : [...new Set(R.porParcela.map(x => fisionomiaDe(S.projeto, x.pc)))].map(k => Calc.EQUACOES[k]?.nome || k);
+    h += `<div class="cartao"><h3>${euc ? esc(METODOS[P.metodo]) : `Volume (VTcc) — equação de ${fisUsadas.join(' e ') || 'Cerrado'}`}</h3><table class="tab">
       <tr><th></th><th>Este critério</th><th>Planilha antiga</th></tr>
       ${linha('Parcelas (n)', E.n, A.n)}${linha('Área (ha)', fmt(R.areaHa, 2), '')}${linha('Média (m³/ha)', fmt(E.media, 2), fmt(A.media, 2))}
       ${linha('Desvio padrão', fmt(E.desvio, 2), fmt(A.desvio, 2))}${linha('CV (%)', fmt(E.cv, 1), fmt(A.cv, 1))}${linha('Erro padrão', fmt(E.sx, 3), fmt(A.sx, 3))}
@@ -526,6 +607,15 @@
   }
 
   // ---------------- mapa (SVG, sem internet) ----------------
+  // fotos com posição (a da própria foto ou, sem ela, a do ponto a que pertence)
+  function fotosNoMapa() {
+    const z = Mapa.z || zona(S.projeto);
+    return S.fotos.map(f => {
+      let lat = f.lat, lon = f.lon;
+      if (lat == null && f.pontoId) { const p = S.pontos.find(x => x.id === f.pontoId); if (p) { lat = p.lat; lon = p.lon; } }
+      return Number.isFinite(lat) && Number.isFinite(lon) ? { f: { ...f, lat, lon }, u: Geo.paraUTM(lat, lon, z) } : null;
+    }).filter(Boolean);
+  }
   const Mapa = {
     vb: null, el: null,
     montar() {
@@ -536,6 +626,7 @@
       const estr = (proj.estratos || []).filter(e => e.coords).map(e => { const p = e.coords.map(c => U(c.lat, c.lon)); pts.push(...p); return { nome: e.nome, p }; });
       const parc = S.parcelas.map(pc => { const v = verticesOrdenados(proj, pc).map(c => U(c.lat, c.lon)); pts.push(...v); return { pc, v }; });
       const pon = S.pontos.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)).map(p => { const u = U(p.lat, p.lon); pts.push(u); return { p, u }; });
+      fotosNoMapa().forEach(({ f }) => pts.push(U(f.lat, f.lon)));
       if (GPS.pos) pts.push(U(GPS.pos.coords.latitude, GPS.pos.coords.longitude));
       if (!pts.length) { el.innerHTML = '<p class="mudo">Nada para mostrar ainda: importe o KML das áreas ou marque parcelas e pontos.</p>'; return; }
       let minE = Math.min(...pts.map(p => p.E)), maxE = Math.max(...pts.map(p => p.E)), minN = Math.min(...pts.map(p => p.N)), maxN = Math.max(...pts.map(p => p.N));
@@ -555,9 +646,11 @@
           ? `<polygon points="${X(u)},${Y(u) - k * 1.3} ${X(u) + k * 1.1},${Y(u) + k * 0.8} ${X(u) - k * 1.1},${Y(u) + k * 0.8}" fill="${p.feito ? '#2e7d32' : cores.planejado}" stroke="#fff" stroke-width="${k * 0.2}"/>
              <text class="m-rot3" x="${X(u)}" y="${Y(u) - k * 1.8}" font-size="${k * 2.2}">${esc(p.nome || '')}</text>`
           : `<circle cx="${X(u)}" cy="${Y(u)}" r="${k * 0.8}" fill="${cores[p.tipo] || '#555'}" stroke="#fff" stroke-width="${k * 0.2}"/>`).join('')}
+        ${fotosNoMapa().map(({ f, u }) => `<g class="m-foto" data-a="ver-foto" data-id="${f.id}" transform="translate(${X(u)},${Y(u)})">
+            <rect x="${-k * 1.1}" y="${-k * 0.8}" width="${k * 2.2}" height="${k * 1.6}" rx="${k * 0.3}"/><circle r="${k * 0.45}"/></g>`).join('')}
         <g id="m-eu"></g></svg>
         <div class="mapa-botoes"><button class="mini" data-a="zoom" data-z="0.6">+</button><button class="mini" data-a="zoom" data-z="1.6">−</button><button class="mini sec" data-a="zoom" data-z="0">⌂</button><button class="mini sec" data-a="zoom" data-z="eu">◎</button><button class="mini sec" data-a="exp" data-f="png" title="Salvar o mapa em imagem">⤓</button></div>
-        <p class="mudo legenda"><span style="color:#2e7d32">■</span> estratos <span style="color:#ef6c00">■</span> parcelas <span style="color:#c62828">●</span> árvores <span style="color:#1565c0">▲</span> a fazer <span style="color:#2e7d32">▲</span> feitas <span style="color:#0d47a1">◉</span> você</p>`;
+        <p class="mudo legenda"><span style="color:#2e7d32">■</span> estratos <span style="color:#ef6c00">■</span> parcelas <span style="color:#c62828">●</span> árvores <span style="color:#1565c0">▲</span> a fazer <span style="color:#2e7d32">▲</span> feitas <span style="color:#6a1b9a">■</span> fotos (toque para abrir) <span style="color:#0d47a1">◉</span> você</p>`;
       this.eventos(); this.posicao();
     },
     posicao() {
@@ -579,13 +672,18 @@
     eventos() {
       const svg = $('#svg-mapa'); const ptrs = new Map(); let ult = null;
       const escala = () => this.vb.w / svg.clientWidth;
-      svg.addEventListener('pointerdown', e => { svg.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); ult = null; });
+      const ini = new Map();
+      svg.addEventListener('pointerdown', e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); ini.set(e.pointerId, { x: e.clientX, y: e.clientY }); ult = null; });
       svg.addEventListener('pointermove', e => {
-        if (!ptrs.has(e.pointerId)) return; const ant = ptrs.get(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (!ptrs.has(e.pointerId)) return;
+        const o = ini.get(e.pointerId);
+        if (o && Math.hypot(e.clientX - o.x, e.clientY - o.y) < 5 && ptrs.size === 1) return;   // ainda é um toque, não um arrasto
+        if (o) { svg.setPointerCapture(e.pointerId); ini.delete(e.pointerId); }
+        const ant = ptrs.get(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (ptrs.size === 1) { const s = escala(); this.vb.x -= (e.clientX - ant.x) * s; this.vb.y -= (e.clientY - ant.y) * s; this.aplicar(); }
         else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y); if (ult) this.zoom(String(ult / d)); ult = d; }
       });
-      const fim = e => { ptrs.delete(e.pointerId); ult = null; };
+      const fim = e => { ptrs.delete(e.pointerId); ini.delete(e.pointerId); ult = null; };
       svg.addEventListener('pointerup', fim); svg.addEventListener('pointercancel', fim);
       svg.addEventListener('wheel', e => { e.preventDefault(); this.zoom(e.deltaY > 0 ? '1.2' : '0.83'); }, { passive: false });
     }
@@ -598,7 +696,8 @@
       case 'voltar':
         if (S.view === 'parcela') { await gravarCabecalho(); S.view = 'projeto'; S.editando = null; S.extras = []; if (S.sujo) backupAutomatico(); }
         else if (S.view === 'navegar') { S.view = 'projeto'; S.aba = 'parcelas'; }
-        else if (S.view === 'novo' || S.view === 'projeto') { S.view = 'home'; S.projeto = null; S.aba = 'parcelas'; Mapa.vb = null; }
+        else if (S.view === 'novo' || S.view === 'projeto') {
+          if (S.view === 'projeto' && S.sujo) await backupAutomatico(); S.view = 'home'; S.projeto = null; S.aba = 'parcelas'; Mapa.vb = null; }
         render(); if (S.view === 'home') preencherHome(); break;
       case 'novo': S.view = 'novo'; S.novoTipo = 'cerrado'; S.novoEstratos = []; S.novoRasc = null; S.novoZona = null; render(); break;
       case 'tipo': S.novoTipo = el.dataset.t; S.novoRasc = { nome: $('#c-nome').value }; render(); break;
@@ -736,6 +835,12 @@
       case 'del-ponto': if (confirm('Apagar este ponto?')) { await apagarFotos(f => f.pontoId === el.dataset.id); await DB.apagar('pontos', el.dataset.id); S.pontos = S.pontos.filter(p => p.id !== el.dataset.id); render(); } break;
       case 'zoom': Mapa.zoom(el.dataset.z); break;
       case 'sol': await definirSol(!S.sol); break;
+      case 'gps-chip':
+        if (GPS.ligado() && !gpsNecessario()) { GPS.temporario = 0; GPS.desligar(); toast('GPS em pausa', 'ok'); }
+        else if (!GPS.ligado()) { GPS.ligarPor(5 * 60 * 1000); toast('GPS ligado por 5 minutos', 'ok'); }
+        else toast(GPS.pos ? `Precisão ±${fmt(GPS.pos.coords.accuracy, 1)} m` : 'Procurando sinal…');
+        break;
+      case 'eq-padrao': ['cerrado', 'cerradao'].forEach(k => ['b0', 'b1', 'b2'].forEach(c => { const el = $(`#c-${k}-${c}`); if (el) el.value = vIn(Calc.EQUACOES[k][c]); })); toast('Equações da planilha restauradas. Toque em Salvar.', 'ok'); break;
       case 'foto': {
         const t = el.dataset.tipo;
         if (t === 'parcela') { await gravarCabecalho(); await novaFoto({ tipo: 'parcela', parcelaId: pc.id }); }
@@ -791,17 +896,22 @@
   const iconeFoto = arvoreId => { const n = S.fotos.filter(f => f.arvoreId === arvoreId).length; return n ? ` <span class="tag">📷${n > 1 ? n : ''}</span>` : ''; };
   const fotosArvoreHTML = a => `<div class="linha-fotos"><button class="sec mini" data-a="foto" data-tipo="arvore">📷 Foto desta árvore</button>${miniaturas(S.fotos.filter(f => f.arvoreId === a.id))}</div>`;
   async function novaFoto(vinc) {
+    GPS.ligarPor(90000);                       // o GPS já vai achando a posição enquanto a câmera está aberta
     let data;
     try { data = await Plataforma.tirarFoto(); } catch (e) { toast('Câmera: ' + esc(e.message), 'erro'); return; }
     if (!data) return;
-    const p = GPS.pos?.coords;
-    const f = { id: uid(), projetoId: S.projeto.id, ...vinc, data, hora: agora(), lat: p?.latitude ?? null, lon: p?.longitude ?? null, acc: p?.accuracy ?? null, autor: S.equipe };
+    let pos = GPS.fresca();
+    if (!pos) { toast('Obtendo a localização da foto…'); pos = await GPS.posicaoAte(12000); }
+    const c = pos?.coords;
+    const f = { id: uid(), projetoId: S.projeto.id, ...vinc, hora: agora(), lat: c?.latitude ?? null, lon: c?.longitude ?? null, acc: c?.accuracy ?? null, alt: c?.altitude ?? null, autor: S.equipe };
+    f.data = Plataforma.comExif(data, f);      // a localização vai dentro do próprio arquivo JPEG
+    if (!c) toast('Foto sem localização: o GPS não respondeu a tempo.', 'aviso');
     await DB.salvar('fotos', f); S.fotos.push(f); S.sujo = true;
-    toast('Foto guardada', 'ok'); render();
+    if (c) toast(`Foto guardada com localização (±${fmt(c.accuracy, 0)} m)`, 'ok'); render();
   }
   function verFoto(id) {
     const f = S.fotos.find(x => x.id === id); if (!f) return;
-    const m = modal(`<img class="foto-grande" src="${f.data}" alt="foto"><p class="mudo">${esc(f.hora || '')}${f.lat != null ? ` · ${fmt(f.lat, 6)}, ${fmt(f.lon, 6)}` : ''}</p>
+    const m = modal(`<img class="foto-grande" src="${f.data}" alt="foto"><p class="mudo">${esc(f.hora || '')} · ${f.lat != null ? `📍 ${fmt(f.lat, 6)}, ${fmt(f.lon, 6)}${f.acc != null ? ` (±${fmt(f.acc, 0)} m)` : ''}` : 'sem localização'}</p>
       <label>Legenda<input id="foto-leg" value="${esc(f.legenda || '')}" placeholder="opcional"></label>
       <div class="botoes"><button class="perigo" data-m="apagar">Apagar foto</button><button data-m="ok">Fechar</button></div>`);
     m.addEventListener('click', async e => {
@@ -822,10 +932,10 @@
     const nomes = Exportar.nomesFotos(S.projeto, S.parcelas, S.pontos, S.fotos);
     const pasta = Exportar.semVirgula(S.projeto.nome);
     if (Plataforma.nativo) {
-      for (const f of S.fotos) await Plataforma.salvarSilencioso(f.data.split(',')[1], `fotos/${pasta}/${nomes.get(f.id)}`);
+      for (const f of S.fotos) await Plataforma.salvarSilencioso(Plataforma.comExif(f.data, f).split(',')[1], `fotos/${pasta}/${nomes.get(f.id)}`);
       toast(`${S.fotos.length} foto(s) salvas em Documentos/Inventario/fotos/${esc(pasta)}`, 'ok');
     } else {
-      for (const f of S.fotos) { const a = document.createElement('a'); a.href = f.data; a.download = nomes.get(f.id); document.body.appendChild(a); a.click(); a.remove(); await new Promise(r => setTimeout(r, 300)); }
+      for (const f of S.fotos) { const a = document.createElement('a'); a.href = Plataforma.comExif(f.data, f); a.download = nomes.get(f.id); document.body.appendChild(a); a.click(); a.remove(); await new Promise(r => setTimeout(r, 300)); }
     }
   }
 
@@ -1023,7 +1133,7 @@
       if (f === 'csv') { blob = Exportar.csv(proj, [...S.parcelas].sort(ordNum)); nome = Exportar.nomeArquivo(proj, 'dados', 'csv'); }
       if (f === 'kml') { blob = Exportar.kml(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'kml'); }
       if (f === 'geojson') { blob = Exportar.geojson(proj, S.parcelas, S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'geojson'); }
-      if (f === 'png') { blob = await MapaPNG.gerar(proj, [...S.parcelas].sort(ordNum), S.pontos); nome = Exportar.nomeArquivo(proj, 'mapa', 'png'); }
+      if (f === 'png') { blob = await MapaPNG.gerar(proj, [...S.parcelas].sort(ordNum), S.pontos, S.fotos); nome = Exportar.nomeArquivo(proj, 'mapa', 'png'); }
       if (f === 'backup') {
         blob = Exportar.backup(proj, S.parcelas, S.pontos, S.fotos); nome = Exportar.nomeArquivo(proj, 'backup', 'json');
         proj.ultimoBackupEnviado = Date.now(); await DB.salvarCru('projetos', proj);
@@ -1132,6 +1242,7 @@
     const el = e.target;
     if (el.type === 'file' && el.dataset.a && el.files[0]) { importar(el.dataset.a, el.files[0]).catch(err => toast('Erro: ' + esc(err.message), 'erro')); el.value = ''; }
     if (el.id === 'pref-sol') definirSol(el.checked);
+    if (el.id === 'pref-tela') { S.telaAcesa = el.checked; DB.config('telaAcesa', S.telaAcesa); }
     if (el.id === 'pref-teclado') { S.teclado = el.checked; DB.config('teclado', S.teclado); }
     if (el.id === 'p-estr' || el.id === 'p-num' || el.id === 'p-obs') gravarCabecalho().then(() => { if (el.id === 'p-estr') render(); });
   });
@@ -1150,19 +1261,25 @@
   window.addEventListener('popstate', () => { if (!Plataforma.nativo && S.view !== 'home') { history.pushState(null, ''); acao('voltar'); } });
 
   // ---------------- início ----------------
-  window.App = { METODOS, cientifico, imune: n => !!imune(n), verticesOrdenados, modal, toast };
+  window.App = { METODOS, cientifico, imune: n => !!imune(n), verticesOrdenados, modal, toast, fisionomiaDe };
   (async function iniciar() {
     if (!Plataforma.nativo && 'serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
     S.equipe = (await DB.config('equipe')) || '';
     S.teclado = (await DB.config('teclado')) ?? true;
+    S.telaAcesa = (await DB.config('telaAcesa')) ?? true;
     S.sol = (await DB.config('sol')) ?? false; document.body.classList.toggle('sol', S.sol);
     if (!Plataforma.aoVoltar(() => {
       const m = document.querySelector('.modal-fundo'); if (m) { m.querySelector('[data-m=cancelar],[data-m=ok]')?.click(); return; }
       if (S.view === 'home') return 'sair';
       acao('voltar');
     })) history.pushState(null, '');
-    GPS.iniciar();
+    Plataforma.aoMudarEstado(async ativo => {
+      GPS.ativo = ativo;
+      if (!ativo) { await gravarCabecalho().catch(() => {}); if (S.sujo) await backupAutomatico(); manterTela(false); GPS.desligar(); }
+      else { ajustarGPS(); if (S.view === 'parcela' || S.view === 'navegar') manterTela(true); }
+    });
+    setInterval(() => { if (S.sujo) backupAutomatico(); }, 60 * 60 * 1000);   // de hora em hora, se houver dado novo
     render(); preencherHome();
   })();
 })();

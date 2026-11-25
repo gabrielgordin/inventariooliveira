@@ -193,3 +193,16 @@ body.sol .sug { background: #fff !important; border: 2px solid #000; color: #000
 /* iPhone instalado na tela inicial: barra de status translúcida sobre o cabeçalho verde */
 @supports (padding-top: env(safe-area-inset-top)) { header { padding-left: max(.8rem, env(safe-area-inset-left)); padding-right: max(.8rem, env(safe-area-inset-right)); } }
 input, select, textarea { font-size: max(16px, 1em); } /* evita o zoom automático do Safari ao tocar no campo */
+
+.grade3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+.estrato { grid-template-columns: 1fr 90px auto auto; }
+.estr-fis { grid-column: 1 / -1; min-height: 40px; font-size: 1rem; }
+
+.chip.pausa { background: #ffffff22; color: #fff; border: 1px dashed #ffffff88; cursor: pointer; }
+.chip { cursor: pointer; }
+.ok-txt { color: var(--bom); } .ruim-txt { color: var(--ruim); }
+
+.m-foto rect { fill: #6a1b9a; stroke: #fff; stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.m-foto circle { fill: #fff; }
+.m-foto { cursor: pointer; }
+#m-eu, #m-eu * { pointer-events: none; }  /* o marcador da posição não bloqueia o toque nas fotos */

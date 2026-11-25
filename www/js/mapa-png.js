@@ -9,7 +9,7 @@
   const ok = p => Number.isFinite(p?.lat) && Number.isFinite(p?.lon);
 
   /* proj, parcelas, pontos, opcoes {resultados: {porParcela}} → Promise<Blob PNG> */
-  function gerar(proj, parcelas, pontos) {
+  function gerar(proj, parcelas, pontos, fotos = []) {
     const ref = (proj.estratos || []).find(e => e.coords?.length)?.coords[0] || parcelas.flatMap(p => p.vertices).find(ok) || pontos.find(ok);
     if (!ref) throw new Error('Nada para desenhar: importe o KML das áreas ou marque parcelas e pontos.');
     const z = proj.zonaUTM || Geo.zonaDe(ref.lon), sul = ref.lat < 0;
@@ -22,8 +22,12 @@
     }).filter(Boolean);
     const semGPS = parcelas.length - parc.length;
     const pts = pontos.filter(ok).map(p => ({ p, u: U(p) }));
+    const fts = (fotos || []).map(f => {
+      let c = f; if (!ok(c) && f.pontoId) c = pontos.find(p => p.id === f.pontoId);
+      return ok(c) ? { f, u: U(c) } : null;
+    }).filter(Boolean);
 
-    const todos = [...estr.flatMap(e => e.u || []), ...parc.flatMap(p => p.v), ...pts.map(p => p.u)];
+    const todos = [...estr.flatMap(e => e.u || []), ...parc.flatMap(p => p.v), ...pts.map(p => p.u), ...fts.map(f => f.u)];
     let minE = Math.min(...todos.map(p => p.E)), maxE = Math.max(...todos.map(p => p.E));
     let minN = Math.min(...todos.map(p => p.N)), maxN = Math.max(...todos.map(p => p.N));
     const lado = Math.max(maxE - minE, maxN - minN, 100), folga = lado * 0.06;
@@ -63,7 +67,8 @@
 
     // ---- título
     texto(proj.nome, M, 62, 50, '#2e5d34', 700);
-    const tipo = proj.tipo === 'eucalipto' ? 'Reflorestamento (eucalipto)' : 'Cerrado nativo';
+    const fis = [...new Set([proj.params?.fisionomia || 'cerrado', ...(proj.estratos || []).map(e => e.fisionomia).filter(Boolean)])].map(k => k === 'cerradao' ? 'Cerradão' : 'Cerrado');
+    const tipo = proj.tipo === 'eucalipto' ? 'Reflorestamento (eucalipto)' : `Nativa (${fis.join(' e ')})`;
     const areaTot = estr.reduce((s, e) => s + (+e.areaHa || 0), 0) || +proj.areaHa || 0;
     texto(`${tipo} · ${parcelas.length} parcela${parcelas.length === 1 ? '' : 's'}${areaTot ? ` · ${fmt(areaTot)} ha` : ''} · ${new Date().toLocaleDateString('pt-BR')}`, M, 118, 30, '#66705f');
 
@@ -106,6 +111,20 @@
       else g.arc(X(u), Y(u), 10, 0, 2 * Math.PI);
       g.fillStyle = cor; g.fill(); g.lineWidth = 3; g.strokeStyle = '#fff'; g.stroke();
     });
+    // fotos: símbolo de câmera roxo
+    const camera = (x, y, esc = 1) => {
+      g.fillStyle = '#6a1b9a'; g.strokeStyle = '#fff'; g.lineWidth = 3;
+      g.beginPath(); g.roundRect ? g.roundRect(x - 15 * esc, y - 10 * esc, 30 * esc, 21 * esc, 5 * esc) : g.rect(x - 15 * esc, y - 10 * esc, 30 * esc, 21 * esc); g.fill(); g.stroke();
+      g.fillRect(x - 6 * esc, y - 15 * esc, 12 * esc, 6 * esc);
+      g.beginPath(); g.arc(x, y + 1 * esc, 6 * esc, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill();
+    };
+    // a câmera se afasta um pouco quando cairia em cima da bolinha de uma parcela
+    fts.forEach(({ u }) => {
+      let x = X(u), y = Y(u);
+      if (parc.some(({ c }) => Math.hypot(X(c) - x, Y(c) - y) < 30)) { x -= 30; y -= 26; }
+      camera(x, y); obstaculo(x, y, 17);
+    });
+
     // prioridade dos rótulos: número da parcela > nome do estrato > nome do ponto
     parc.forEach(({ pc, c }) => rotulo(pc.numero, X(c), Y(c), 30, '#bf360c', 700, rP, true));
     rotEstr.forEach(({ e, x, y: y0, w, bh, poly }) => {
@@ -171,6 +190,8 @@
         texto(`${nome} (${L.length}${t === 'planejado' ? ` · ${feitos} feitas` : ''})`, lx + 60, ly, 25); ly += 46;
       });
     }
+    if (fts.length) { ly += 6; camera(lx + 22, ly); texto(`Foto (${fts.length})`, lx + 60, ly, 25); ly += 46;
+      const sem = (fotos || []).length - fts.length; if (sem) { texto(`${sem} foto(s) sem localização`, lx, ly, 20, '#9aa595'); ly += 30; } }
     ly += 20;
     texto('Coordenadas UTM', lx, ly, 22, '#66705f', 700); ly += 32;
     texto(`SIRGAS 2000 · zona ${z}${sul ? 'S' : 'N'}`, lx, ly, 22, '#66705f'); ly += 32;

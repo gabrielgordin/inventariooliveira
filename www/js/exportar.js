@@ -44,7 +44,11 @@
       ['Projeto', proj.nome], ['Tipo', euc ? 'Reflorestamento (eucalipto)' : 'Cerrado nativo'],
       ['Parcela (m)', `${P.comprimento} x ${P.largura}`], ['Área da parcela (m²)', P.comprimento * P.largura],
       ...(euc ? [['Fator de forma', P.fatorForma], ['Método principal', App.METODOS[P.metodo]], ['Espaçamento', P.espacamento || '']] : [['CAP mínimo (cm)', P.capMin]]),
-      ['Equação: V = b0·DAP^b1·H^b2·fator', ''], ['b0', P.eq.b0], ['b1', P.eq.b1], ['b2', P.eq.b2], ['fator', P.eq.fator],
+      ...(euc ? [['Método simplificado (planilha)', 'V = (CAP/628,32)² × 3,1416 × H × fator de forma — H medida ou, sem ela, estimada pela regressão'],
+          ['Equação dos métodos "Equação": V = b0·DAP^b1·H^b2·fator', ''], ['b0', P.eq.b0], ['b1', P.eq.b1], ['b2', P.eq.b2], ['fator', P.eq.fator]]
+        : [['Fisionomia padrão', (Calc.EQUACOES[P.fisionomia] || {}).nome || 'Cerrado'],
+          ...['cerrado', 'cerradao'].map(k => { const q = (P.eqs || {})[k] || Calc.EQUACOES[k]; return [`Equação ${Calc.EQUACOES[k].nome} (DAP cm, H m)`, `V = ${q.b0} × DAP^${q.b1} × H^${q.b2}`]; }),
+          ...(proj.estratos || []).map(e => [`Fisionomia do estrato ${e.nome}`, (Calc.EQUACOES[e.fisionomia || P.fisionomia] || {}).nome || 'Cerrado'])]),
       ['Probabilidade', P.prob], ['Erro admissível', P.erroAdm], ['Fator de empilhamento (st/m³)', P.fatorEmp],
       ['Desvio padrão', P.desvio === 'populacional' ? 'populacional' : 'amostral'], ['Correção de população finita', P.fpc ? 'sim' : 'não'],
       ['Zona UTM', `${z || ''} S — SIRGAS 2000`], ['Exportado em', new Date().toLocaleString('pt-BR')]
@@ -53,21 +57,22 @@
     // Dados (uma linha por árvore ou fuste)
     const dados = [];
     if (euc) {
-      dados.push(['Parcela', 'Estrato', 'Árvore', 'Fuste', 'Falha', 'CAP (cm)', 'DAP (cm)', 'H medida (m)', 'H estimada (m)', 'g (m²)', 'Volume II (m³)', 'Equação (m³)']);
+      dados.push(['Parcela', 'Estrato', 'Árvore', 'Fuste', 'Falha', 'CAP (cm)', 'DAP (cm)', 'H medida (m)', 'H estimada (m)', 'H usada no simplificado (m)', 'g (m²)', 'Volume simplificado (m³)', 'Volume II (m³)', 'Equação (m³)']);
       R.porParcela.forEach(({ pc, r: rp }) => {
         const cont = {};
         pc.arvores.forEach(s => {
           cont[s.arvore] = (cont[s.arvore] || 0) + 1;
           const f = rp.fustes.find(x => x.id === s.id);
           dados.push([pc.numero, pc.estrato || '', s.arvore, s.falha ? '' : cont[s.arvore], s.falha ? 'F' : '', s.CAP ?? '',
-            s.CAP ? r(s.CAP / Math.PI, 2) : '', s.H ?? '', f ? r(f.hEst, 2) : '', s.CAP ? r(Calc.gDeCap(s.CAP), 6) : '',
+            s.CAP ? r(s.CAP / Math.PI, 2) : '', s.H ?? '', f ? r(f.hEst, 2) : '', f ? r(f.hSimpl, 2) : '', s.CAP ? r(Calc.gDeCap(s.CAP), 6) : '',
+            f ? r((f.CAP / 628.32) ** 2 * 3.1416 * f.hSimpl * P.fatorForma, 6) : '',
             f ? r(Calc.gDeCap(f.CAP) * f.hEst * P.fatorForma, 6) : '', f ? r(Calc.volEquacao(f.CAP / Math.PI, f.hEst, P.eq), 6) : '']);
         });
       });
     } else {
-      dados.push(['Parcela', 'Estrato', 'Árvore nº', 'Nome popular', 'Nome científico', 'H (m)', 'CAP (cm)', 'CAPs extras (fustes)', 'CAP equivalente (cm)', 'DAP (cm)', 'g (m²)', 'Incluída?', 'VTcc (m³)', 'Imune de corte', 'Observação']);
+      dados.push(['Parcela', 'Estrato', 'Fisionomia', 'Árvore nº', 'Nome popular', 'Nome científico', 'H (m)', 'CAP (cm)', 'CAPs extras (fustes)', 'CAP equivalente (cm)', 'DAP (cm)', 'g (m²)', 'Incluída?', 'VTcc (m³)', 'Imune de corte', 'Observação']);
       R.porParcela.forEach(({ pc, r: rp }) => rp.arvores.forEach(({ t, c }, i) => dados.push([
-        pc.numero, pc.estrato || '', i + 1, t.nome || '', App.cientifico(proj, t.nome), t.H ?? '', t.CAP ?? '', (t.fustesExtras || []).join(' + '),
+        pc.numero, pc.estrato || '', (Calc.EQUACOES[App.fisionomiaDe(proj, pc)] || {}).nome || '', i + 1, t.nome || '', App.cientifico(proj, t.nome), t.H ?? '', t.CAP ?? '', (t.fustesExtras || []).join(' + '),
         r(c.capEq, 2), r(c.dap, 2), r(c.g, 6), c.incluida ? 'sim' : 'não', r(c.v, 6), App.imune(t.nome) ? 'SIM' : '', t.obs || ''])));
     }
     add('Dados', dados);
@@ -75,13 +80,13 @@
     // Parcelas
     const cab = ['Parcela', 'Estrato', 'Situação', 'Nº vértices', 'Área GPS (m²)', 'Latitude centro', 'Longitude centro', 'E centro (m)', 'N centro (m)'];
     const parc = [euc ? [...cab, 'Árvores/ha', 'Fustes/ha', 'Falhas', 'CAP médio', 'H média', 'H estimada média', 'R² regressão', 'G (m²/ha)',
-      'Padrão (m³/ha)', 'Árv. média H reg. (m³/ha)', 'Volume II (m³/ha)', 'Equação árv. média (m³/ha)', 'Equação por fuste (m³/ha)', 'Observação']
+      'Simplificada (m³/ha)', 'Padrão (m³/ha)', 'Árv. média H reg. (m³/ha)', 'Volume II (m³/ha)', 'Equação árv. média (m³/ha)', 'Equação por fuste (m³/ha)', 'Observação']
       : [...cab, 'Nº árvores', 'Excluídas (CAP < mín.)', 'N/ha', 'G (m²/ha)', 'V (m³/ha)', 'Observação']];
     R.porParcela.forEach(({ pc, r: rp, geo }) => {
       const base = [pc.numero, pc.estrato || '', pc.fechada ? 'fechada' : 'aberta', pc.vertices.length, geo?.area ? r(geo.area, 1) : '',
         geo?.c ? r(geo.c.lat, 7) : '', geo?.c ? r(geo.c.lon, 7) : '', geo?.c ? r(geo.cu.E, 1) : '', geo?.c ? r(geo.cu.N, 1) : ''];
       parc.push(euc ? [...base, r(rp.ha.arvores, 1), r(rp.ha.fustes, 1), rp.nFalhas, r(rp.capMed, 2), r(rp.hMed, 2), r(rp.hEstMed, 2),
-        rp.regressao ? r(rp.regressao.r2, 4) : '', r(rp.ha.g, 4), r(rp.ha.padrao, 3), r(rp.ha.arvMediaReg, 3), r(rp.ha.vol2, 3), r(rp.ha.eqMedia, 3), r(rp.ha.eqFuste, 3), pc.obs || '']
+        rp.regressao ? r(rp.regressao.r2, 4) : '', r(rp.ha.g, 4), r(rp.ha.simplificada, 3), r(rp.ha.padrao, 3), r(rp.ha.arvMediaReg, 3), r(rp.ha.vol2, 3), r(rp.ha.eqMedia, 3), r(rp.ha.eqFuste, 3), pc.obs || '']
         : [...base, rp.nIncluidas, rp.nExcluidas, r(rp.ha.arvores, 1), r(rp.ha.g, 4), r(rp.ha.v, 4), pc.obs || '']);
     });
     add('Parcelas', parc);
