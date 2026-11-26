@@ -104,6 +104,10 @@
       R.classes = Calc.classesDap(porParcela.flatMap(x => x.r.fustes.map(f => ({ dap: f.CAP / Math.PI, v: Calc.gDeCap(f.CAP) * f.hEst * p.fatorForma }))), 5);
     } else {
       R.fito = Calc.fitossociologia(porParcela.map(x => ({ id: x.pc.id, arvores: x.r.arvores })), p.areaParcela);
+      const famDe = nome => Familias.de(cientifico(proj, nome));
+      R.fito.forEach(s => { s.familia = famDe(s.nome); });
+      R.familias = Calc.porFamilia(R.fito, famDe);
+      R.div = Calc.diversidade(porParcela.map(x => ({ id: x.pc.id, arvores: x.r.arvores })), p.areaParcela);
       R.classes = Calc.classesDap(porParcela.flatMap(x => x.r.arvores.filter(a => a.c.incluida).map(a => ({ dap: a.c.dap, v: a.c.v }))), 5);
     }
     if ((proj.estratos || []).length > 1) {
@@ -592,8 +596,20 @@
     }
     const prc = R.porParcela.map(x => `<tr><td>${esc(x.pc.numero)}</td><td>${esc(x.pc.estrato || '')}</td><td>${euc ? x.r.nFustes : x.r.nIncluidas}</td><td>${fmt(x.r.ha.g, 2)}</td><td>${fmt(R.vha(x), 1)}</td></tr>`).join('');
     h += `<div class="cartao"><h3>Parcelas</h3><table class="tab"><tr><th>Nº</th><th>Estrato</th><th>${euc ? 'Fustes' : 'Árv.'}</th><th>G m²/ha</th><th>m³/ha</th></tr>${prc}</table></div>`;
+    if (R.div) {
+      const D = R.div, ok = D.estabilizando;
+      h += `<div class="cartao"><h3>Diversidade e suficiência amostral</h3>
+        <div class="grade-res"><div><small>Espécies (S)</small><b>${D.S}</b></div><div><small>Famílias</small><b>${R.familias.filter(f => f.familia !== 'Indeterminada').length}</b></div>
+        <div><small>Shannon H'</small><b>${fmt(D.H, 2)}</b></div><div><small>Pielou J</small><b>${D.J != null ? fmt(D.J, 2) : '—'}</b></div>
+        <div><small>Simpson C</small><b>${D.C != null ? fmt(D.C, 2) : '—'}</b></div><div><small>Jackknife 1ª ordem</small><b>${fmt(D.jack1, 1)}</b></div></div>
+        ${curvaSVG(D)}
+        <p class="mudo">${D.n < 3 ? 'Com menos de 3 parcelas a curva ainda não diz nada.' : `Os últimos ${fmt(D.areaFinal, 0)}% da área amostrada acrescentaram <b>${fmt(D.acrescimo10, 1)}%</b> de espécies, e as ${D.S} espécies encontradas são <b>${fmt(D.pctEstimado, 0)}%</b> das ${fmt(D.jack1, 0)} estimadas. ${ok ? 'A curva está se estabilizando.' : 'A curva ainda sobe: mais parcelas devem acrescentar espécies.'}`}${D.S < R.fito.length ? ` Ficaram fora dos índices: ${R.fito.length - D.S} nome(s) que não são espécie (ex.: morta).` : ''}</p></div>`;
+      h += `<div class="cartao"><h3>Famílias</h3><div class="rolagem"><table class="tab"><tr><th>Família</th><th>Espécies</th><th>N</th><th>N%</th><th>G%</th></tr>
+        ${R.familias.map(f => `<tr><td>${esc(f.familia)}</td><td>${f.especies}</td><td>${f.N}</td><td>${fmt(f.pN, 1)}</td><td>${fmt(f.pG, 1)}</td></tr>`).join('')}</table></div>
+        ${R.familias.some(f => f.familia === 'Indeterminada') ? '<p class="mudo">"Indeterminada": espécie sem nome científico no cadastro ou de gênero que o app não conhece.</p>' : ''}</div>`;
+    }
     if (R.fito) h += `<div class="cartao"><h3>Fitossociologia</h3><div class="rolagem"><table class="tab"><tr><th>Espécie</th><th>N</th><th>DA</th><th>DR%</th><th>FR%</th><th>DoR%</th><th>VI%</th><th>m³</th></tr>
-      ${R.fito.map(s => `<tr><td>${esc(s.nome)}${imune(s.nome) ? ' <span class="tag ruim">imune</span>' : ''}${tagAmeaca(s.nome)}</td><td>${s.N}</td><td>${fmt(s.DA, 0)}</td><td>${fmt(s.DR, 1)}</td><td>${fmt(s.FR, 1)}</td><td>${fmt(s.DoR, 1)}</td><td>${fmt(s.VI, 1)}</td><td>${fmt(s.V, 3)}</td></tr>`).join('')}</table></div></div>`;
+      ${R.fito.map(s => `<tr><td>${esc(s.nome)}${imune(s.nome) ? ' <span class="tag ruim">imune</span>' : ''}${tagAmeaca(s.nome)}${s.familia ? `<br><small class="mudo">${esc(s.familia)}</small>` : ''}</td><td>${s.N}</td><td>${fmt(s.DA, 0)}</td><td>${fmt(s.DR, 1)}</td><td>${fmt(s.FR, 1)}</td><td>${fmt(s.DoR, 1)}</td><td>${fmt(s.VI, 1)}</td><td>${fmt(s.V, 3)}</td></tr>`).join('')}</table></div></div>`;
     if (R.classes?.length) h += `<div class="cartao"><h3>Classes de DAP</h3><table class="tab"><tr><th>DAP (cm)</th><th>Nº</th><th>% nº</th><th>% volume</th></tr>
       ${R.classes.map(c => `<tr><td>${c.min}–${c.max}</td><td>${c.n}</td><td>${fmt(c.pn, 1)}</td><td>${fmt(c.pv, 1)}</td></tr>`).join('')}</table></div>`;
     return h;
@@ -943,6 +959,20 @@
     const m = Math.round((Date.now() - t) / 60000);
     return m < 2 ? 'agora há pouco' : m < 60 ? `há ${m} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : `há ${Math.round(m / 1440)} dia(s)`;
   };
+
+  // curva espécie × área (média de 200 ordens aleatórias das parcelas, e a observada)
+  function curvaSVG(D) {
+    if (D.n < 2) return '';
+    const W = 320, H = 170, m = { l: 34, r: 8, t: 10, b: 28 }, xs = D.curva.map(c => c.areaHa), ymax = Math.max(...D.curva.map(c => Math.max(c.media, c.observada)));
+    const X = v => m.l + v / xs[xs.length - 1] * (W - m.l - m.r), Y = v => H - m.b - v / ymax * (H - m.t - m.b);
+    const linha = k => D.curva.map((c, i) => `${i ? 'L' : 'M'}${X(c.areaHa).toFixed(1)},${Y(c[k]).toFixed(1)}`).join('');
+    return `<svg class="curva" viewBox="0 0 ${W} ${H}" role="img" aria-label="Curva espécie por área">
+      <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" class="eixo"/><line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" class="eixo"/>
+      <path d="${linha('observada')}" class="obs"/><path d="${linha('media')}" class="med"/>
+      <text x="${m.l - 4}" y="${Y(ymax) + 4}" text-anchor="end">${Math.round(ymax)}</text><text x="${m.l - 4}" y="${H - m.b}" text-anchor="end">0</text>
+      <text x="${W - m.r}" y="${H - 8}" text-anchor="end">${fmt(xs[xs.length - 1], 2)} ha</text><text x="${m.l}" y="${H - 8}">área amostrada</text>
+      <text x="${m.l + 6}" y="${m.t + 10}" class="leg-med">— média</text><text x="${m.l + 64}" y="${m.t + 10}" class="leg-obs">— ordem de medição</text></svg>`;
+  }
 
   // ----- lançamento por voz -----
   async function lancarPorVoz(pc) {

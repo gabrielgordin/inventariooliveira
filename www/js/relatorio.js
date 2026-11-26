@@ -179,9 +179,14 @@
     if (estr) b.push(P('Na amostragem estratificada, a média é ponderada pela área de cada estrato, e os graus de liberdade efetivos foram obtidos pela fórmula de Satterthwaite.'));
     if (!euc) {
       b.push(H2('4.5 Fitossociologia'));
-      b.push(P('A estrutura horizontal foi descrita pelos parâmetros: densidade absoluta (DA = nᵢ / área amostrada, ind/ha) e relativa (DR); frequência absoluta (FA = % das parcelas com a espécie) e relativa (FR); dominância absoluta (DoA = área basal por hectare) e relativa (DoR); valor de cobertura, VC = (DR + DoR) / 2; e valor de importância, VI = (DR + FR + DoR) / 3.'));
+      b.push(P('A estrutura horizontal foi descrita pelos parâmetros: densidade absoluta (DA = nᵢ / área amostrada, ind/ha) e relativa (DR); frequência absoluta (FA = % das parcelas com a espécie) e relativa (FR); dominância absoluta (DoA = área basal por hectare) e relativa (DoR); valor de cobertura, VC = (DR + DoR) / 2; e valor de importância, VI = (DR + FR + DoR) / 3. As espécies foram agrupadas em famílias segundo o APG IV, pelo gênero do nome científico.'));
+      b.push(H2('4.6 Diversidade e suficiência amostral'));
+      b.push(P('A diversidade foi descrita pelos índices abaixo, calculados com os indivíduos incluídos (árvores mortas e sem nome ficam de fora), sendo nᵢ o número de indivíduos da espécie i, N o total de indivíduos e S o número de espécies:'));
+      ["Shannon: H' = −Σ pᵢ · ln pᵢ, com pᵢ = nᵢ / N;", "equabilidade de Pielou: J = H' / ln S;", 'Simpson: C = 1 − Σ nᵢ(nᵢ − 1) / [N(N − 1)];',
+        'riqueza estimada por Jackknife de 1ª ordem: S + Q1 · (n − 1) / n, sendo Q1 o número de espécies presentes em uma só parcela e n o número de parcelas.'].forEach(t => b.push(marcador(t)));
+      b.push(P('A suficiência amostral foi avaliada pela curva espécie × área: o número acumulado de espécies em função da área amostrada, como média de 200 ordens aleatórias das parcelas, para que o resultado não dependa da ordem em que foram medidas. A amostragem é considerada suficiente quando a curva tende à estabilização, isto é, quando o acréscimo de área passa a acrescentar poucas espécies novas.'));
     }
-    if (!euc) b.push(H2('4.6 Espécies protegidas'));
+    if (!euc) b.push(H2('4.7 Espécies protegidas'));
     if (!euc) b.push(P('Os nomes científicos foram conferidos com a Lista Nacional Oficial de Espécies da Flora Ameaçadas de Extinção (Portaria GM/MMA nº 1.783, de 26 de outubro de 2026) e com as espécies declaradas imunes de corte em Minas Gerais pela Lei Estadual nº 20.308/2012 (pequizeiro, Caryocar brasiliense, e ipê-amarelo).'));
 
     // ----- resultados -----
@@ -229,6 +234,27 @@
         [...esp.map(l => [l[2], l[1] || '—', br(l[4], 4), br(l[5], 2), br(l[6], 2)]), ['Total', '', br(esp.reduce((s, l) => s + (l[4] || 0), 0), 4), br(tot, 2), br(tot * (Pm.fatorEmp ?? 1.5), 2)]],
         [24, 30, 15, 15, 16], { al: ['l', 'l', 'r', 'r', 'r'], sz: 16, totalUltima: true }));
       if (estr) b.push(P('O volume por espécie foi extrapolado pela razão entre a área total e a área amostrada; por isso a soma pode diferir ligeiramente do total da amostragem estratificada.'));
+      if (R.familias) {
+        const det = R.familias.filter(x => x.familia !== 'Indeterminada');
+        b.push(H2(`5.${sec++} Composição por família`));
+        b.push(P(`As ${R.fito.length} espécies distribuem-se em ${det.length} famílias botânicas.${det.length ? ` As de maior número de indivíduos são ${det.slice(0, 3).map(x => `${x.familia} (${x.N} indivíduos, ${x.especies} espécie${x.especies > 1 ? 's' : ''})`).join(', ')}.` : ''}${det.length < R.familias.length ? ' Indeterminada = espécie sem nome científico ou de gênero não classificado [completar].' : ''}`));
+        b.push(T('Composição florística por família'));
+        b.push(tabela(['Família', 'Espécies', '% espécies', 'Indivíduos', '% indivíduos', '% área basal'],
+          R.familias.map(x => [x.familia, String(x.especies), br(x.pS, 1), String(x.N), br(x.pN, 1), br(x.pG, 1)]), [30, 13, 14, 14, 15, 14], { al: ['l', 'r', 'r', 'r', 'r', 'r'], sz: 17 }));
+      }
+      if (R.div) {
+        const D = R.div;
+        b.push(H2(`5.${sec++} Diversidade e suficiência amostral`));
+        b.push(T('Índices de diversidade'));
+        b.push(tabela(['Índice', 'Valor'], [['Riqueza observada (S)', String(D.S)], ['Indivíduos (N)', String(D.N)], ["Shannon (H')", br(D.H, 3)], ["H' máximo (ln S)", br(D.Hmax, 3)],
+          ['Equabilidade de Pielou (J)', D.J != null ? br(D.J, 3) : '—'], ['Simpson (C)', D.C != null ? br(D.C, 3) : '—'], ['Riqueza estimada (Jackknife 1ª ordem)', br(D.jack1, 1)]], [70, 30], { al: ['l', 'r'] }));
+        b.push(P(`Foram registradas ${D.S} espécies, para uma riqueza estimada de ${br(D.jack1, 0)} espécies pelo Jackknife de 1ª ordem (${D.Q1} espécie${D.Q1 === 1 ? ' ocorreu' : 's ocorreram'} em uma só parcela). O índice de Shannon foi de ${br(D.H, 2)} nats/indivíduo, e a equabilidade de Pielou, de ${D.J != null ? br(D.J, 2) : '—'}. [Comparar com outros levantamentos da mesma fisionomia na região.]`));
+        if (D.n >= 3) {
+          try { b.push(await imagem(await curvaPNG(D), 'png', 14, 9)); b.push(legenda(`Figura ${++fig} – Curva espécie × área: média de 200 ordens aleatórias das parcelas (linha cheia) e ordem de medição (tracejada).`)); }
+          catch (e) { /* sem canvas: fica só o texto */ }
+          b.push(P(`Os últimos ${br(D.areaFinal, 0)}% da área amostrada acrescentaram ${br(D.acrescimo10, 1)}% ao número de espécies da curva média, e as ${D.S} espécies observadas correspondem a ${br(D.pctEstimado, 0)}% da riqueza estimada. ${D.estabilizando ? 'A curva tende à estabilização, o que indica que a amostragem representou bem a riqueza da vegetação.' : 'A curva ainda não se estabilizou: novas parcelas tenderiam a acrescentar espécies. [Avaliar a suficiência amostral e a necessidade de complementar a amostragem.]'}`));
+        } else b.push(P('[Com menos de três parcelas não há curva espécie × área.]'));
+      }
       R.fito.forEach(s => {
         const im = App.imune(s.nome), am = App.ameaca(proj, s.nome);
         if (im || (am && !am.genero)) protegidas.push({ s, im, am: am && !am.genero ? am : null });
@@ -361,6 +387,29 @@ ${midias.map(m => `<Relationship Id="${m.rid}" Type="http://schemas.openxmlforma
     midias.forEach(m => C.utils.cfb_add(z, '/word/media/' + m.nome, m.bytes));
     const out = C.write(z, { fileType: 'zip', type: 'array', compression: true });
     return new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  }
+
+  // curva espécie × área em PNG para o Word
+  function curvaPNG(D) {
+    const W = 1400, H = 860, m = { l: 150, r: 50, t: 60, b: 130 }, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const g = cv.getContext('2d'), xs = D.curva.map(c => c.areaHa), xm = xs[xs.length - 1];
+    const ymax = Math.max(1, Math.ceil(Math.max(...D.curva.map(c => Math.max(c.media, c.observada))) / 5) * 5);
+    const X = v => m.l + v / xm * (W - m.l - m.r), Y = v => H - m.b - v / ymax * (H - m.t - m.b);
+    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); g.font = '30px Arial'; g.fillStyle = '#333'; g.strokeStyle = '#ddd'; g.lineWidth = 2;
+    for (let k = 0; k <= 5; k++) {
+      const v = ymax * k / 5; g.beginPath(); g.moveTo(m.l, Y(v)); g.lineTo(W - m.r, Y(v)); g.stroke();
+      g.textAlign = 'right'; g.fillText(String(Math.round(v)), m.l - 14, Y(v) + 10);
+      const a = xm * k / 5; g.textAlign = 'center'; g.fillText(a.toLocaleString('pt-BR', { maximumFractionDigits: 2 }), X(a), H - m.b + 42);
+    }
+    g.strokeStyle = '#555'; g.beginPath(); g.moveTo(m.l, m.t); g.lineTo(m.l, H - m.b); g.lineTo(W - m.r, H - m.b); g.stroke();
+    g.textAlign = 'center'; g.fillText('Área amostrada acumulada (ha)', (m.l + W - m.r) / 2, H - 30);
+    g.save(); g.translate(48, (m.t + H - m.b) / 2); g.rotate(-Math.PI / 2); g.fillText('Número de espécies', 0, 0); g.restore();
+    const linha = (k, cor, larg, tracos) => { g.strokeStyle = cor; g.lineWidth = larg; g.setLineDash(tracos); g.beginPath(); D.curva.forEach((c, i) => i ? g.lineTo(X(c.areaHa), Y(c[k])) : g.moveTo(X(c.areaHa), Y(c[k]))); g.stroke(); g.setLineDash([]); };
+    linha('observada', '#9e9e9e', 4, [14, 10]); linha('media', '#2e7d32', 7, []);
+    g.fillStyle = '#2e7d32'; D.curva.forEach(c => { g.beginPath(); g.arc(X(c.areaHa), Y(c.media), 8, 0, 7); g.fill(); });
+    g.textAlign = 'left'; g.fillStyle = '#2e7d32'; g.fillText('— média de 200 ordens aleatórias', m.l + 30, m.t + 30);
+    g.fillStyle = '#777'; g.fillText('- - ordem de medição', m.l + 30, m.t + 72);
+    return new Promise(res => cv.toBlob(res, 'image/png'));
   }
 
   root.Relatorio = { gerar };

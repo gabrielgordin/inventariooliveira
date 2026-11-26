@@ -235,6 +235,56 @@
     return L.sort((a, b) => b.VI - a.VI);
   }
 
+  // ---------- diversidade e suficiência amostral ----------
+  // nomes que não são espécie (árvore morta, sem nome) ficam fora dos índices
+  const NAO_ESPECIE = /^(morta|morto|arvore morta|morta em pe|seca|\(sem nome\)|sem nome|indeterminada|nao identificada)$/;
+  const chaveNome = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  /* parcelas: [{id, arvores:[{t, c}]}] na ordem de medição. Devolve S, N, H' (Shannon, ln), Hmax, J (Pielou),
+     C (Simpson, 1 − Σ n(n−1)/N(N−1)), jackknife de 1ª ordem e a curva espécie × área
+     (observada, na ordem das parcelas, e média de 200 ordens aleatórias). */
+  function diversidade(parcelas, areaParcela, perm = 200) {
+    const listas = parcelas.map(p => p.arvores.filter(a => a.c.incluida && !NAO_ESPECIE.test(chaveNome(a.t.nome))).map(a => a.t.nome.trim()));
+    const cont = new Map(), ocorr = new Map();
+    listas.forEach(L => { L.forEach(n => cont.set(n, (cont.get(n) || 0) + 1)); new Set(L).forEach(n => ocorr.set(n, (ocorr.get(n) || 0) + 1)); });
+    const S = cont.size, N = sum([...cont.values()]), n = parcelas.length;
+    if (!S || !N) return null;
+    const H = -sum([...cont.values()].map(x => (x / N) * Math.log(x / N)));
+    const Hmax = Math.log(S), J = S > 1 ? H / Hmax : null;
+    const C = N > 1 ? 1 - sum([...cont.values()].map(x => x * (x - 1))) / (N * (N - 1)) : null;
+    const Q1 = [...ocorr.values()].filter(x => x === 1).length, Q2 = [...ocorr.values()].filter(x => x === 2).length;
+    const jack1 = S + Q1 * (n - 1) / n;
+    const acumular = ordem => { const vis = new Set(); return ordem.map(i => { listas[i].forEach(x => vis.add(x)); return vis.size; }); };
+    const obs = acumular(listas.map((_, i) => i));
+    let a = 12345; const rnd = () => { a = (a * 1103515245 + 12345) % 2147483648; return a / 2147483648; };
+    const somas = new Array(n).fill(0);
+    for (let k = 0; k < perm; k++) {
+      const o = listas.map((_, i) => i);
+      for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [o[i], o[j]] = [o[j], o[i]]; }
+      acumular(o).forEach((v, i) => { somas[i] += v; });
+    }
+    const curva = obs.map((v, i) => ({ parcelas: i + 1, areaHa: (i + 1) * areaParcela / 10000, observada: v, media: somas[i] / perm }));
+    // acréscimo de espécies nos últimos 10% da área amostrada (curva média)
+    const k90 = Math.min(n - 1, Math.max(1, Math.round(n * 0.9)));
+    const acrescimo10 = n >= 2 ? (curva[n - 1].media - curva[k90 - 1].media) / curva[n - 1].media * 100 : null;
+    const areaFinal = (n - k90) / n * 100;
+    // estabilizando: a área a mais rende proporcionalmente bem menos espécies, e o observado já está perto do estimado
+    const pctEstimado = S / jack1 * 100;
+    const estabilizando = n >= 3 && acrescimo10 != null && acrescimo10 / areaFinal < 0.5 && pctEstimado >= 85;
+    return { S, N, H, Hmax, J, C, Q1, Q2, jack1, pctEstimado, estabilizando, n, curva, acrescimo10, areaFinal };
+  }
+  // agrupa a fitossociologia por família; famDe(nome popular) → família ('' = indeterminada)
+  function porFamilia(fito, famDe) {
+    const m = new Map();
+    fito.forEach(s => {
+      const f = famDe(s.nome) || 'Indeterminada';
+      if (!m.has(f)) m.set(f, { familia: f, especies: 0, N: 0, G: 0, V: 0 });
+      const x = m.get(f); x.especies++; x.N += s.N; x.G += s.G; x.V += s.V;
+    });
+    const L = [...m.values()], tN = sum(L.map(x => x.N)), tG = sum(L.map(x => x.G)), tS = sum(L.map(x => x.especies));
+    L.forEach(x => { x.pN = x.N / tN * 100; x.pG = tG ? x.G / tG * 100 : 0; x.pS = x.especies / tS * 100; });
+    return L.sort((a, b) => b.N - a.N || b.especies - a.especies);
+  }
+
   // ---------- classes de DAP ----------
   function classesDap(itens, largura) { // itens: [{dap, v}]
     const m = new Map();
@@ -299,7 +349,7 @@
   const api = { EQUACOES,
     tinv, mean, variance, sum, dapDeCap, gDeCap, volEquacao, regressao,
     parcelaEucalipto, parcelaCerrado, arvoreCerrado, estatistica, estratificada,
-    fitossociologia, classesDap, alertasArvore, foraDaMedia
+    fitossociologia, diversidade, porFamilia, classesDap, alertasArvore, foraDaMedia
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Calc = api;
 })(typeof window !== 'undefined' ? window : globalThis);

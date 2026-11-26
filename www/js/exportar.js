@@ -77,9 +77,9 @@
         });
       });
     } else {
-      dados.push(['Parcela', 'Estrato', 'Fisionomia', 'Árvore nº', 'Nome popular', 'Nome científico', 'H (m)', 'CAP (cm)', 'CAPs extras (fustes)', 'CAP equivalente (cm)', 'DAP (cm)', 'g (m²)', 'Incluída?', 'VTcc (m³)', 'Imune de corte', 'Ameaçada (Portaria GM/MMA 1.783/2026)', 'Observação']);
+      dados.push(['Parcela', 'Estrato', 'Fisionomia', 'Árvore nº', 'Nome popular', 'Nome científico', 'Família', 'H (m)', 'CAP (cm)', 'CAPs extras (fustes)', 'CAP equivalente (cm)', 'DAP (cm)', 'g (m²)', 'Incluída?', 'VTcc (m³)', 'Imune de corte', 'Ameaçada (Portaria GM/MMA 1.783/2026)', 'Observação']);
       R.porParcela.forEach(({ pc, r: rp }) => rp.arvores.forEach(({ t, c }, i) => dados.push([
-        pc.numero, pc.estrato || '', (Calc.EQUACOES[App.fisionomiaDe(proj, pc)] || {}).nome || '', i + 1, t.nome || '', App.cientifico(proj, t.nome), t.H ?? '', t.CAP ?? '', (t.fustesExtras || []).join(' + '),
+        pc.numero, pc.estrato || '', (Calc.EQUACOES[App.fisionomiaDe(proj, pc)] || {}).nome || '', i + 1, t.nome || '', App.cientifico(proj, t.nome), Familias.de(App.cientifico(proj, t.nome)), t.H ?? '', t.CAP ?? '', (t.fustesExtras || []).join(' + '),
         r(c.capEq, 2), r(c.dap, 2), r(c.g, 6), c.incluida ? 'sim' : 'não', r(c.v, 6), App.imune(t.nome) ? 'SIM' : '', amTxt(t.nome), t.obs || ''])));
     }
     add('Dados', dados);
@@ -122,8 +122,23 @@
     }
     add('Estatistica', est);
 
-    if (R.fito) add('Fitossociologia', [['Nome popular', 'Nome científico', 'N', 'Parcelas', 'G (m²)', 'DA (ind/ha)', 'DR (%)', 'FA (%)', 'FR (%)', 'DoA (m²/ha)', 'DoR (%)', 'VC (%)', 'VI (%)', 'V (m³)', 'V/ha (m³/ha)', 'Imune de corte', 'Ameaçada (Portaria GM/MMA 1.783/2026)'],
-      ...R.fito.map(s => [s.nome, App.cientifico(proj, s.nome), s.N, s.nParcelas, r(s.G, 5), r(s.DA, 2), r(s.DR, 2), r(s.FA, 2), r(s.FR, 2), r(s.DoA, 4), r(s.DoR, 2), r(s.VC, 2), r(s.VI, 2), r(s.V, 4), r(s.Vha, 4), App.imune(s.nome) ? 'SIM' : '', amTxt(s.nome)])]);
+    if (R.fito) add('Fitossociologia', [['Nome popular', 'Nome científico', 'Família', 'N', 'Parcelas', 'G (m²)', 'DA (ind/ha)', 'DR (%)', 'FA (%)', 'FR (%)', 'DoA (m²/ha)', 'DoR (%)', 'VC (%)', 'VI (%)', 'V (m³)', 'V/ha (m³/ha)', 'Imune de corte', 'Ameaçada (Portaria GM/MMA 1.783/2026)'],
+      ...R.fito.map(s => [s.nome, App.cientifico(proj, s.nome), s.familia || 'Indeterminada', s.N, s.nParcelas, r(s.G, 5), r(s.DA, 2), r(s.DR, 2), r(s.FA, 2), r(s.FR, 2), r(s.DoA, 4), r(s.DoR, 2), r(s.VC, 2), r(s.VI, 2), r(s.V, 4), r(s.Vha, 4), App.imune(s.nome) ? 'SIM' : '', amTxt(s.nome)])]);
+    if (R.familias) add('Familias', [['Família', 'Nº de espécies', '% das espécies', 'Nº de indivíduos', '% dos indivíduos', 'G (m²)', '% da área basal', 'V (m³)'],
+      ...R.familias.map(f => [f.familia, f.especies, r(f.pS, 2), f.N, r(f.pN, 2), r(f.G, 5), r(f.pG, 2), r(f.V, 4)])]);
+    if (R.div) {
+      const D = R.div;
+      add('Diversidade', [['Índice', 'Valor', 'Fórmula'],
+        ['Riqueza observada (S)', D.S, 'nº de espécies (fora árvores mortas e sem nome)'], ['Indivíduos (N)', D.N, ''],
+        ["Shannon (H')", r(D.H, 4), "H' = −Σ pi·ln pi, pi = ni/N"], ["H' máximo", r(D.Hmax, 4), 'ln S'],
+        ['Equabilidade de Pielou (J)', D.J != null ? r(D.J, 4) : '', "J = H' / ln S"], ['Simpson (C)', D.C != null ? r(D.C, 4) : '', 'C = 1 − Σ ni(ni−1) / N(N−1)'],
+        ['Espécies em uma só parcela (Q1)', D.Q1, ''], ['Espécies em duas parcelas (Q2)', D.Q2, ''], ['Riqueza estimada — Jackknife 1ª ordem', r(D.jack1, 2), 'S + Q1·(n−1)/n'],
+        ['Acréscimo de espécies nos últimos ' + r(D.areaFinal, 0) + '% da área (%)', D.acrescimo10 != null ? r(D.acrescimo10, 2) : '', 'pela curva média'],
+        ['Espécies observadas / estimadas (%)', r(D.pctEstimado, 1), 'S / Jackknife × 100'],
+        ['Curva tende à estabilização?', D.estabilizando ? 'sim' : 'não', 'acréscimo de espécies < metade do acréscimo de área e S ≥ 85% do estimado'],
+        [], ['Curva espécie × área'], ['Parcelas', 'Área acumulada (ha)', 'Espécies — ordem de medição', 'Espécies — média de 200 ordens aleatórias'],
+        ...D.curva.map(c => [c.parcelas, r(c.areaHa, 4), c.observada, r(c.media, 2)])]);
+    }
     if (R.classes) add('Classes_DAP', [['DAP (cm)', 'Nº', '% nº', '% volume'], ...R.classes.map(c => [`${c.min} a ${c.max}`, c.n, r(c.pn, 2), r(c.pv, 2)])]);
 
     const vert = [['Parcela', 'Vértice', 'Nome', 'Latitude', 'Longitude', 'E (m)', 'N (m)', 'Precisão (m)', 'Leituras', 'Data/hora', 'Gerado (não marcado)']];
