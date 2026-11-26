@@ -66,7 +66,8 @@
   // família a partir do nome científico ("Qualea grandiflora", "Myrcia sp.", "Hymenaea (conferir)")
   function de(cientifico) {
     const g = String(cientifico || '').replace(/\(.*?\)/g, '').trim().split(/\s+/)[0].toLowerCase();
-    return G[g] || '';
+    // gênero fora da tabela: usa a família que o anexo da Portaria GM/MMA 1.783/2026 dá para ele
+    return G[g] || (root.AMEACADAS && root.AMEACADAS.familiaDoGenero[g]) || '';
   }
   root.Familias = { de, lista: F };
   if (typeof module !== 'undefined') module.exports = root.Familias;

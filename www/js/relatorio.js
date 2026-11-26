@@ -269,7 +269,7 @@
     if (!euc) {
       b.push(H2(`5.${sec++} Espécies imunes de corte e ameaçadas de extinção`));
       const pts = pontos.filter(p => p.tipo === 'arvore' && p.situacao && Number.isFinite(p.lat) && Number.isFinite(p.lon));
-      if (!protegidas.length && !pts.length) b.push(P('Não foram registradas, nas parcelas, espécies imunes de corte (Lei MG nº 20.308/2012) nem espécies da Lista Nacional Oficial de Espécies da Flora Ameaçadas de Extinção (Portaria GM/MMA nº 1.783/2026), dentro do recorte de espécies conferido pelo app. [Confirmar com a lista completa.]'));
+      if (!protegidas.length && !pts.length) b.push(P('Não foram registradas, nas parcelas, espécies imunes de corte (Lei MG nº 20.308/2012) nem espécies da Lista Nacional Oficial de Espécies da Flora Ameaçadas de Extinção (Portaria GM/MMA nº 1.783/2026). A conferência foi feita pelo nome científico atribuído a cada nome popular; espécies sem identificação científica não puderam ser conferidas.'));
       else {
         if (protegidas.length) {
           b.push(T('Espécies protegidas registradas nas parcelas'));

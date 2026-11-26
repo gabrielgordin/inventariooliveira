@@ -105,7 +105,7 @@
       ['4. Resultado do IF → aba Resultado_IF. Use a coluna "por parcela" ou "por hectare" conforme a unidade pedida na tela.'],
       ['5. Anexe esta planilha e a planilha completa do inventário (.xlsx) no campo de anexos.'], [],
       ['Confira o produto florestal (lenha, tora, mourão…) e as unidades exigidas na tela antes de enviar.'],
-      ['Espécies ameaçadas: Lista Nacional Oficial — Portaria GM/MMA nº 1.783/2026 (recorte dos gêneros arbóreos mais comuns do cerrado; confira no anexo oficial).']
+      ['Espécies ameaçadas: Lista Nacional Oficial — Portaria GM/MMA nº 1.783/2026 (anexo completo, 3.730 táxons, conferido pelo nome científico de cada espécie).']
     ], [110]);
     add('Informacoes_Gerais', [['Campo do SINAFLOR', 'Valor'], ...D.geral], [34, 90]);
     add('Resultado_IF', [['Parâmetro', 'Por parcela (m³/parcela)', 'Por hectare (m³/ha)'], ...D.resultado,
