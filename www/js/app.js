@@ -283,6 +283,8 @@
       <details class="cartao"><summary>Equipe e aparelho</summary>
         <label>Nome de quem coleta neste aparelho<input id="equipe" value="${esc(S.equipe)}" placeholder="ex.: Gabriel"></label>
         <p class="mudo">Vai junto em cada parcela, para juntar os dados de dois aparelhos depois.</p>
+        <label>Numerar as parcelas novas deste aparelho a partir de<input id="inicio-num" inputmode="numeric" value="${S.inicioNum}"></label>
+        <p class="mudo">Para dois aparelhos no mesmo inventário não criarem a mesma parcela: por exemplo, 1 num celular e 31 no outro. Parcelas abertas pelo plano (🧭) mantêm o número do plano.</p>
         <button class="sec" data-a="salvar-equipe">Salvar</button>
         <label class="check"><input type="checkbox" id="pref-teclado" ${S.teclado ? 'checked' : ''}> Usar o teclado numérico do app (teclas grandes) no lançamento das árvores</label>
         <label class="check"><input type="checkbox" id="pref-tela" ${S.telaAcesa ? 'checked' : ''}> Manter a tela acesa durante o lançamento da parcela (desligar economiza bateria; na navegação a tela fica sempre acesa)</label>
@@ -434,7 +436,7 @@
         ${temPoly ? `<button class="sec" data-a="planejar">🗺 Planejar parcelas</button>` : ''}
         ${plan.length > feitas ? `<button data-a="navegar">🧭 Ir até a próxima (${plan.length - feitas} faltam)</button>` : ''}</div>
         ${plan.length ? `<p class="mudo">Plano: ${plan.length} parcelas planejadas · ${feitas} feitas.</p>` : ''}` : '';
-    return `${resumoErro(R)}${botoesPlano}<button class="largo" data-a="nova-parcela">+ Nova parcela</button>
+    return `${resumoErro(R)}${botoesPlano}<button class="largo" data-a="nova-parcela">+ Nova parcela${S.inicioNum > 1 ? ` <small>(nº ${padNum(proximoNumero())})</small>` : ''}</button>
       <div class="lista">${linhas || '<p class="mudo">Nenhuma parcela lançada.</p>'}</div>`;
   }
 
@@ -785,10 +787,15 @@
         break;
       case 'enviar-da-lista': await enviarInventario(el.dataset.id); preencherHome(); break;
       case 'enviar': await enviarInventario(proj.id); render(); break;
-      case 'salvar-equipe': S.equipe = $('#equipe').value.trim(); await DB.config('equipe', S.equipe); toast('Salvo', 'ok'); break;
+      case 'salvar-equipe': {
+        S.equipe = $('#equipe').value.trim(); await DB.config('equipe', S.equipe);
+        const ini = parseInt($('#inicio-num').value, 10);
+        S.inicioNum = ini > 0 && ini < 10000 ? ini : 1; $('#inicio-num').value = S.inicioNum; await DB.config('inicioNum', S.inicioNum);
+        toast(`Salvo. Parcelas novas deste aparelho começam em ${padNum(S.inicioNum)}.`, 'ok'); break;
+      }
       case 'nova-parcela': {
-        const nums = S.parcelas.map(p => parseInt(p.numero) || 0), prox = (nums.length ? Math.max(...nums) : 0) + 1;
-        const pcN = { id: uid(), projetoId: proj.id, numero: String(prox).padStart(proj.tipo === 'eucalipto' ? 2 : 3, '0'), estrato: '', vertices: [], arvores: [], obs: '', criado: Date.now(), fechada: false, excluir: false };
+        const prox = proximoNumero();
+        const pcN = { id: uid(), projetoId: proj.id, numero: padNum(prox), estrato: '', vertices: [], arvores: [], obs: '', criado: Date.now(), fechada: false, excluir: false };
         await salvarParcela(pcN); S.parcelaId = pcN.id; S.view = 'parcela'; S.editando = null; S.extras = []; render(); break;
       }
       case 'parcela': S.parcelaId = el.dataset.id; S.view = 'parcela'; S.editando = null; S.extras = []; render(); break;
@@ -1109,7 +1116,16 @@
   }
 
   // ----- planejamento das parcelas -----
-  const padNum = n => String(n).padStart(S.projeto.tipo === 'eucalipto' ? 2 : 3, '0');
+  const padNum = n => String(n).padStart(S.projeto?.tipo === 'cerrado' ? 3 : 2, '0');
+  /* próximo número livre para uma parcela nova feita neste aparelho: o primeiro número, a partir do início
+     configurado em Equipe e aparelho, que nenhuma parcela nem ponto planejado usa */
+  function proximoNumero() {
+    const ini = S.inicioNum || 1, num = x => parseInt(String(x).replace(/\D/g, ''), 10) || 0;
+    const usados = new Set([...S.parcelas.map(p => num(p.numero)), ...S.pontos.filter(p => p.tipo === 'planejado').map(p => num(p.nome))]);
+    let n = ini;
+    while (usados.has(n)) n++;
+    return n;
+  }
   async function planejarParcelas() {
     const proj = S.projeto, P = params(proj);
     const est = estratosUTM(proj).map(e => ({ ...e, areaHa: +(proj.estratos.find(x => x.nome === e.nome)?.areaHa) || Geo.areaPoligono(e.poly) / 10000 }));
@@ -1494,6 +1510,7 @@
     if (!Plataforma.nativo && 'serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
     S.equipe = (await DB.config('equipe')) || '';
+    S.inicioNum = (await DB.config('inicioNum')) || 1;
     S.teclado = (await DB.config('teclado')) ?? true;
     S.telaAcesa = (await DB.config('telaAcesa')) ?? true;
     S.sol = (await DB.config('sol')) ?? false; document.body.classList.toggle('sol', S.sol);
